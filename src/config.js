@@ -23,6 +23,13 @@ export const config = {
   embeddingModel: process.env.EMBEDDING_MODEL || "",
   embeddingApiKey: process.env.EMBEDDING_API_KEY || "",
   embeddingGroupId: process.env.MINIMAX_EMBEDDING_GROUP_ID || "",
+  imageProvider: process.env.IMAGE_PROVIDER || "minimax",
+  imageBaseUrl: process.env.IMAGE_BASE_URL || "",
+  imageModel: process.env.IMAGE_MODEL || "",
+  imageProviderKeys: {
+    minimax: process.env.MINIMAX_IMAGE_API_KEY || process.env.MINIMAX_API_KEY || "",
+    baidu_qwen: process.env.BAIDU_QIANFAN_IMAGE_API_KEY || ""
+  },
   embeddingProviderKeys: {
     openai:process.env.OPENAI_EMBEDDING_API_KEY||(process.env.EMBEDDING_PROVIDER==="openai"?process.env.EMBEDDING_API_KEY||"":""),
     google:process.env.GOOGLE_EMBEDDING_API_KEY||((process.env.EMBEDDING_PROVIDER==="google"||(process.env.MINIMAX_EMBEDDING_API_KEY&&process.env.EMBEDDING_API_KEY&&process.env.EMBEDDING_API_KEY!==process.env.MINIMAX_EMBEDDING_API_KEY))?process.env.EMBEDDING_API_KEY||"":""),
@@ -72,6 +79,11 @@ export const embeddingProviderDefaults = {
   mock: {label:"离线向量测试",baseUrl:"",model:"local-embedding"}
 };
 
+export const imageProviderDefaults = {
+  minimax: {label:"MiniMax 生图",baseUrl:"https://api.minimaxi.com/v1",model:"image-01",protocol:"minimax"},
+  baidu_qwen: {label:"百度千帆 · 千问生图",baseUrl:"https://qianfan.baidubce.com/v2",model:"qwen-image",protocol:"openai_images"}
+};
+
 export function activeProvider() {
   const preset = providerDefaults[config.llmProvider] || providerDefaults.custom;
   return { ...preset, id:config.llmProvider, baseUrl:config.baseUrl || preset.baseUrl, model:config.openaiModel || preset.model, apiKey:config.providerKeys[config.llmProvider] || "" };
@@ -80,4 +92,9 @@ export function activeProvider() {
 export function activeEmbeddingProvider(){
   const preset=embeddingProviderDefaults[config.embeddingProvider]||embeddingProviderDefaults.custom;
   return {...preset,id:config.embeddingProvider,baseUrl:config.embeddingBaseUrl||preset.baseUrl,model:config.embeddingModel||preset.model,apiKey:config.embeddingProviderKeys?.[config.embeddingProvider]||"",groupId:config.embeddingProvider==="minimax"?config.embeddingGroupId||"":""};
+}
+
+export function activeImageProvider(){
+  const preset=imageProviderDefaults[config.imageProvider]||imageProviderDefaults.minimax;
+  return {...preset,id:config.imageProvider,baseUrl:config.imageBaseUrl||preset.baseUrl,model:config.imageModel||preset.model,apiKey:config.imageProviderKeys?.[config.imageProvider]||""};
 }

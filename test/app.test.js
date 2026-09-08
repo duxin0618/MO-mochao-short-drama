@@ -13,7 +13,7 @@ const { app } = await import("../src/app.js");
 const { run } = await import("../src/db.js");
 const { searchIdeaKnowledge, cleanupAutomaticKnowledge, seedAutomaticSources } = await import("../src/knowledge.js");
 const { novelDescriptionIssues, novelPerspectiveIssue, splitNovelLongParagraphs, stripNovelRevisionHeading } = await import("../src/llm.js");
-const { buildEpisodeNovelPrompt, buildOutlineDramaticBatchPrompt } = await import("../src/prompts.js");
+const { buildEpisodeNovelPrompt, buildOutlineDramaticBatchPrompt, buildSkillEpisodePrompt } = await import("../src/prompts.js");
 const { createWorkspaceBackup, restoreWorkspaceBackup, validateWorkspaceBackup } = await import("../src/backup.js");
 const { detectInstallMode } = await import("../src/updater.js");
 const server = app.listen(0, "127.0.0.1");
@@ -32,6 +32,10 @@ test("健康检查和完整创作主链", async () => {
   const scopedBatch=buildOutlineDramaticBatchPrompt({total_episodes:10,tags:[]},scopedConstraints,[],[],[{episode_no:6}],[],[]);assert.match(scopedBatch,/苏婉清发现录音/);assert.doesNotMatch(scopedBatch,/反派身份不得揭晓/);
   const sinkingBatch=buildOutlineDramaticBatchPrompt({total_episodes:10,tags:[],story_mode:"miniprogram"},[],[],[],[{episode_no:1}],[],[]);assert.match(sinkingBatch,/软肋/);assert.match(sinkingBatch,/反常配合/);assert.match(sinkingBatch,/荒谬私利/);assert.match(sinkingBatch,/同等级、立即生效/);
   const normalBatch=buildOutlineDramaticBatchPrompt({total_episodes:10,tags:[],story_mode:"normal"},[],[],[],[{episode_no:1}],[],[]);assert.doesNotMatch(normalBatch,/反常配合/);
+  const longBatch=buildOutlineDramaticBatchPrompt({total_episodes:10,tags:[],narrative_length:"long"},[],[],[],[{episode_no:1}],[],[]);assert.doesNotMatch(longBatch,/作品体量｜短篇/);
+  const shortBatch=buildOutlineDramaticBatchPrompt({total_episodes:10,tags:[],narrative_length:"short"},[],[],[],[{episode_no:1}],[],[]);assert.match(shortBatch,/作品体量｜短篇/);assert.match(shortBatch,/单一处境/);assert.match(shortBatch,/1–2次.*宏观状态跃迁/);
+  const shortNovel=buildEpisodeNovelPrompt({narrative_person:"first",emotion_intensity:"strong",narrative_length:"short"},[],[],{episode_no:1,summary:"主角被怪物堵门",required_plot:"怪物钻门→主角阻拦→门外出现熟人",must_not_reveal:"无"},[],{novelTarget:{}},{});assert.match(shortNovel,/单一处境内部充分设计/);
+  const shortScript=buildSkillEpisodePrompt({narrative_person:"first",emotion_intensity:"strong",narrative_length:"short"},[],[],{episode_no:1,required_plot:"怪物钻门→主角阻拦",must_not_reveal:"无",novel:"我举刀阻拦怪物。"},[],{scriptTarget:{}},{episodePlan:"1 内 房间 夜\n（怪物钻门+主角举刀阻拦）"});assert.match(shortScript,/不得把短篇模式重新压缩成多项大事件/);
   assert.equal(novelPerspectiveIssue(`我推开门。\n\n「他怎么还没来？」`,"first"),"");
   assert.match(novelPerspectiveIssue(`方野推开门。\n\n「我来晚了。」`,"first"),/第一人称/);
   assert.equal(novelPerspectiveIssue(`方野推开门。\n\n「我来晚了。」`,"third"),"");
@@ -54,6 +58,9 @@ test("健康检查和完整创作主链", async () => {
   const modelSettings=(await request("/api/settings/llm")).body,baiduEmbedding=modelSettings.embeddingProviders.find(item=>item.id==="baidu");assert.equal(baiduEmbedding?.baseUrl,"https://qianfan.baidubce.com/v2");assert.equal(baiduEmbedding?.model,"bge-large-zh");
   const created=await request("/api/projects",{method:"POST",body:JSON.stringify({title:"测试短剧",total_episodes:6,tags:["悬疑"],seed:"失忆的女主每天收到未来的短信"})});
   assert.equal(created.r.status,201); const id=created.body.id;
+  assert.equal((await request(`/api/projects/${id}`)).body.narrative_length,"long");
+  const shortLength=await request(`/api/projects/${id}/narrative-length`,{method:"PUT",body:JSON.stringify({narrative_length:"short"})});assert.equal(shortLength.body.narrative_length,"short");assert.equal((await request(`/api/projects/${id}`)).body.narrative_length,"short");
+  await request(`/api/projects/${id}/narrative-length`,{method:"PUT",body:JSON.stringify({narrative_length:"long"})});
   assert.deepEqual((await request(`/api/projects/${id}`)).body.idea_libraries,[]);
   const selectedIdeaLibraries=await request(`/api/projects/${id}/idea-libraries`,{method:"PUT",body:JSON.stringify({libraries:["reality","market","invalid","reality"]})});assert.deepEqual(selectedIdeaLibraries.body.libraries,["reality","market"]);assert.deepEqual((await request(`/api/projects/${id}`)).body.idea_libraries,["reality","market"]);
   const today=new Date().toISOString().slice(0,10),future=new Date(Date.now()+86400000).toISOString();run(`INSERT INTO knowledge_items(library,external_id,title,summary,snapshot_date,source_url,narrative_json,item_type,confidence,expires_at,auto_generated) VALUES('market','test-work','摆摊鉴宝逆袭','底层摊主获得鉴别古董真伪的能力',@date,'test://work',@narrative,'work_card',0.9,@expires,1)`,{date:today,expires:future,narrative:JSON.stringify({one_sentence_premise:"底层摊主依靠鉴宝能力进入古玩圈",core_mechanism:"鉴别古董真伪"})});const ragEvidence=await searchIdeaKnowledge({seed:"摆摊鉴宝",tags:["逆袭"],idea_libraries:["market"]},8);assert.ok(ragEvidence.some(item=>item.title==="摆摊鉴宝逆袭"));
@@ -108,6 +115,7 @@ test("健康检查和完整创作主链", async () => {
   const workbenchOn=await request("/api/workbench",{method:"PUT",body:JSON.stringify({parallel_enabled:true,concurrency_mode:"manual",concurrency_limit:2})});assert.equal(workbenchOn.body.parallelEnabled,true);assert.equal(workbenchOn.body.effectiveConcurrency,2);assert.match(workbenchOn.body.sessionId,/^wb-/);
   const workbenchFive=await request("/api/workbench",{method:"PUT",body:JSON.stringify({concurrency_mode:"manual",concurrency_limit:5})});assert.equal(workbenchFive.body.concurrencyLimit,5);assert.equal(workbenchFive.body.effectiveConcurrency,5);
   const workbenchAuto=await request("/api/workbench",{method:"PUT",body:JSON.stringify({concurrency_mode:"auto"})});assert.equal(workbenchAuto.body.concurrencyMode,"auto");
+  const workbenchAutoCap=await request("/api/workbench",{method:"PUT",body:JSON.stringify({concurrency_mode:"auto",concurrency_limit:4})});assert.equal(workbenchAutoCap.body.concurrencyLimit,4);assert.equal(workbenchAutoCap.body.effectiveConcurrency,4);
   const workbenchDisabled=await request("/api/workbench",{method:"PUT",body:JSON.stringify({parallel_enabled:false})});assert.equal(workbenchDisabled.body.parallelEnabled,false);assert.equal(workbenchDisabled.body.sessionId,"");assert.deepEqual(workbenchDisabled.body.jobs,[]);
 });
 

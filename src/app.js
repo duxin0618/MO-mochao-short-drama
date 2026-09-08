@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import express from "express";
 import multer from "multer";
-import { activeEmbeddingProvider, activeProvider, config, embeddingProviderDefaults, providerDefaults } from "./config.js";
+import { activeEmbeddingProvider, activeImageProvider, activeProvider, config, embeddingProviderDefaults, imageProviderDefaults, providerDefaults } from "./config.js";
 import { all, detachLegacyStoryStateFromControls, get, run, now, transaction } from "./db.js";
 import { ARTIFACT_TITLES, STAGES, canonicalRelationshipSubject, parseArtifact, parseProject, resolveProtagonist } from "./domain.js";
 import { buildCharacterImagePromptPrompt, buildStagePrompt } from "./prompts.js";
@@ -18,6 +18,7 @@ import { createWorkspaceBackup, restoreWorkspaceBackup, validateWorkspaceBackup 
 import { memorySnapshot } from "./memory.js";
 import { embeddingConfigured, testEmbeddingConnection } from "./embeddings.js";
 import { detectInstallMode, preparePortableUpdate } from "./updater.js";
+import { generateImage } from "./image-generation.js";
 
 const upload = multer({ dest: config.uploadsDir, limits: { fileSize: 30 * 1024 * 1024 } });
 const backupUpload=multer({dest:config.uploadsDir,limits:{fileSize:250*1024*1024}});
@@ -106,7 +107,7 @@ function upsertArtifact(projectId, type, content, status = "draft") {
   return parseArtifact(get("SELECT * FROM artifacts WHERE id=@id", { id: Number(result.lastInsertRowid) }));
 }
 
-app.get("/api/health", (_req, res) => { const p=activeProvider(); res.json({ ok:true,provider:p.id,providerLabel:p.label,model:p.model,apiKeyConfigured:Boolean(p.apiKey) }); });
+app.get("/api/health", (_req, res) => { const p=activeProvider(),image=activeImageProvider(); res.json({ ok:true,provider:p.id,providerLabel:p.label,model:p.model,apiKeyConfigured:Boolean(p.apiKey),imageProvider:image.id,imageProviderLabel:image.label,imageModel:image.model,imageApiKeyConfigured:Boolean(image.apiKey) }); });
 app.get("/api/version",async(_req,res)=>{
   const current=readLocalVersion(),installMode=detectInstallMode(config.root);
   try{
@@ -132,7 +133,9 @@ app.get("/api/settings/llm", (_req, res) => res.json({
   apiKeyConfigured: Boolean(activeProvider().apiKey), apiKeyHint: activeProvider().apiKey ? `••••••••${activeProvider().apiKey.slice(-4)}` : "",
   providers:Object.entries(providerDefaults).map(([id,p])=>({id,label:p.label,baseUrl:p.baseUrl,model:p.model,models:p.models||[]})),
   embedding:(()=>{const p=activeEmbeddingProvider();return {provider:p.id,baseUrl:p.baseUrl,model:p.model,groupId:p.groupId||"",apiKeyConfigured:Boolean(p.apiKey),apiKeyHint:p.apiKey?`••••••••${p.apiKey.slice(-4)}`:""}})(),
-  embeddingProviders:Object.entries(embeddingProviderDefaults).map(([id,p])=>{const key=config.embeddingProviderKeys?.[id]||"";return {id,label:p.label,baseUrl:p.baseUrl,model:p.model,needsGroupId:id==="minimax",groupId:id==="minimax"?config.embeddingGroupId||"":"",apiKeyConfigured:Boolean(key),apiKeyHint:key?`••••••••${key.slice(-4)}`:""};})
+  embeddingProviders:Object.entries(embeddingProviderDefaults).map(([id,p])=>{const key=config.embeddingProviderKeys?.[id]||"";return {id,label:p.label,baseUrl:p.baseUrl,model:p.model,needsGroupId:id==="minimax",groupId:id==="minimax"?config.embeddingGroupId||"":"",apiKeyConfigured:Boolean(key),apiKeyHint:key?`••••••••${key.slice(-4)}`:""};}),
+  image:(()=>{const p=activeImageProvider();return {provider:p.id,baseUrl:p.baseUrl,model:p.model,apiKeyConfigured:Boolean(p.apiKey),apiKeyHint:p.apiKey?`••••••••${p.apiKey.slice(-4)}`:""}})(),
+  imageProviders:Object.entries(imageProviderDefaults).map(([id,p])=>{const key=config.imageProviderKeys?.[id]||"";return {id,label:p.label,baseUrl:p.baseUrl,model:p.model,apiKeyConfigured:Boolean(key),apiKeyHint:key?`••••••••${key.slice(-4)}`:""};})
 }));
 app.put("/api/settings/llm", (req, res) => {
   const provider = providerDefaults[req.body.provider] ? req.body.provider : "custom";
@@ -172,6 +175,24 @@ app.put("/api/settings/embedding",(req,res)=>{
   res.json({provider,providerLabel:preset.label,model,baseUrl,groupId,apiKeyConfigured:Boolean(key),apiKeyHint:key?`••••••••${key.slice(-4)}`:""});
 });
 app.post("/api/settings/embedding/test",async(req,res)=>{try{res.json(await testEmbeddingConnection(req.body));}catch(error){res.status(400).json({ok:false,error:error.message||String(error)});}});
+app.put("/api/settings/image",(req,res)=>{
+  const provider=imageProviderDefaults[req.body.provider]?req.body.provider:"minimax",preset=imageProviderDefaults[provider];
+  const model=String(req.body.model||preset.model).trim(),baseUrl=String(req.body.base_url||preset.baseUrl).trim().replace(/\/$/,""),supplied=String(req.body.api_key||"").trim(),key=supplied||config.imageProviderKeys?.[provider]||"";
+  if(!key)return res.status(400).json({error:"请填写文生图 API Key"});
+  if(!baseUrl||!model)return res.status(400).json({error:"请填写文生图 Base URL 和模型名称"});
+  const envPath=path.join(config.root,".env"),existing=fs.existsSync(envPath)?fs.readFileSync(envPath,"utf8").split(/\r?\n/):[],values=new Map(existing.filter(Boolean).map(line=>{const i=line.indexOf("=");return i>0?[line.slice(0,i),line.slice(i+1)]:[line,""];}));
+  const keyNames={minimax:"MINIMAX_IMAGE_API_KEY",baidu_qwen:"BAIDU_QIANFAN_IMAGE_API_KEY"};
+  values.set("IMAGE_PROVIDER",provider);values.set("IMAGE_BASE_URL",baseUrl);values.set("IMAGE_MODEL",model);if(key)values.set(keyNames[provider],key);
+  for(const [savedProvider,envName] of Object.entries(keyNames)){const savedKey=savedProvider===provider?key:config.imageProviderKeys?.[savedProvider];if(savedKey)values.set(envName,savedKey);}
+  fs.writeFileSync(envPath,[...values].map(([k,v])=>`${k}=${v}`).join("\n")+"\n",{encoding:"utf8",mode:0o600});
+  config.imageProvider=provider;config.imageBaseUrl=baseUrl;config.imageModel=model;config.imageProviderKeys[provider]=key;
+  res.json({provider,providerLabel:preset.label,model,baseUrl,apiKeyConfigured:true,apiKeyHint:`••••••••${key.slice(-4)}`});
+});
+app.post("/api/settings/image/test",async(req,res)=>{try{
+  const provider=imageProviderDefaults[req.body.provider]?req.body.provider:"minimax",preset=imageProviderDefaults[provider],apiKey=String(req.body.api_key||"").trim()||config.imageProviderKeys?.[provider]||"",started=Date.now();
+  await generateImage({providerId:provider,apiKey,baseUrl:String(req.body.base_url||preset.baseUrl),model:String(req.body.model||preset.model),prompt:"一位成年人物的简洁全身设定图，纯色背景，无文字"});
+  res.json({ok:true,providerLabel:preset.label,model:String(req.body.model||preset.model),latencyMs:Date.now()-started});
+}catch(error){res.status(400).json({ok:false,error:error.message||String(error)});}});
 app.get("/api/meta", (_req, res) => res.json({ stages: STAGES }));
 app.get("/api/backup",(_req,res)=>{const backup=createWorkspaceBackup(readLocalVersion().version),stamp=new Date().toISOString().replace(/[:.]/g,"-");res.setHeader("Content-Type","application/vnd.mochao.backup+json; charset=utf-8");res.setHeader("Content-Disposition",`attachment; filename="mochao-workspace-${stamp}.mo-backup"`);res.send(JSON.stringify(backup));});
 app.post("/api/backup/restore",backupUpload.single("file"),(req,res)=>{const filePath=req.file?.path;try{if(req.body?.confirm!=="true")return res.status(400).json({error:"请先确认使用备份替换当前工作区"});if(!filePath)return res.status(400).json({error:"请选择 .mo-backup 备份文件"});const active=get("SELECT COUNT(*) count FROM jobs WHERE status IN ('queued','running')")?.count||0;if(active)return res.status(409).json({error:"仍有进行中或排队中的任务，请先完成或取消任务后再恢复备份"});const parsed=validateWorkspaceBackup(JSON.parse(fs.readFileSync(filePath,"utf8")));res.json(restoreWorkspaceBackup(parsed));}catch(error){res.status(400).json({error:error.message||String(error)});}finally{if(filePath&&fs.existsSync(filePath))try{fs.unlinkSync(filePath);}catch{}}});
@@ -284,6 +305,7 @@ app.put("/api/projects/:id/episode-count",requireProject,(req,res)=>{
 app.put("/api/projects/:id/template",requireProject,(req,res)=>{const templateId=String(req.body.template_id||"default");if(!builtinTemplateById(templateId)&&!get("SELECT id FROM templates WHERE id=@id AND (project_id IS NULL OR project_id=@pid)",{id:Number(templateId),pid:req.project.id}))return res.status(404).json({error:"模板不存在"});run("UPDATE projects SET template_id=@template,updated_at=@time WHERE id=@id",{template:templateId,time:now(),id:req.project.id});res.json({template_id:templateId});});
 app.put("/api/projects/:id/emotion-intensity",requireProject,(req,res)=>{const value=req.body.emotion_intensity==="extreme"?"extreme":"strong";run("UPDATE projects SET emotion_intensity=@value,updated_at=@time WHERE id=@id",{value,time:now(),id:req.project.id});res.json({emotion_intensity:value});});
 app.put("/api/projects/:id/story-mode",requireProject,(req,res)=>{const value=req.body.story_mode==="miniprogram"?"miniprogram":"normal";run("UPDATE projects SET story_mode=@value,updated_at=@time WHERE id=@id",{value,time:now(),id:req.project.id});res.json({story_mode:value});});
+app.put("/api/projects/:id/narrative-length",requireProject,(req,res)=>{const value=req.body.narrative_length==="short"?"short":"long";run("UPDATE projects SET narrative_length=@value,updated_at=@time WHERE id=@id",{value,time:now(),id:req.project.id});res.json({narrative_length:value});});
 app.put("/api/projects/:id/narrative-person",requireProject,(req,res)=>{const value=req.body.narrative_person==="third"?"third":"first";run("UPDATE projects SET narrative_person=@value,updated_at=@time WHERE id=@id",{value,time:now(),id:req.project.id});res.json({narrative_person:value});});
 app.put("/api/projects/:id/idea-libraries",requireProject,(req,res)=>{const libraries=[...new Set((Array.isArray(req.body.libraries)?req.body.libraries:[]).filter(item=>["reality","market"].includes(item)))];run("UPDATE projects SET idea_libraries_json=@libraries,updated_at=@time WHERE id=@id",{libraries:JSON.stringify(libraries),time:now(),id:req.project.id});res.json({libraries});});
 app.get("/api/projects/:id/jobs", requireProject, (req,res)=>res.json(listJobs(req.project.id)));
@@ -553,13 +575,10 @@ function saveCharacterImage(projectId,index,name,filePath,source,prompt=""){run(
   ON CONFLICT(project_id,character_index) DO UPDATE SET character_name=excluded.character_name,file_path=excluded.file_path,source=excluded.source,prompt=excluded.prompt,created_at=CURRENT_TIMESTAMP`,{pid:projectId,idx:index,name,path:filePath,source,prompt});return get("SELECT id,character_index,character_name,source,prompt,created_at FROM character_images WHERE project_id=@pid AND character_index=@idx",{pid:projectId,idx:index});}
 app.post("/api/projects/:id/characters/:index/image/generate",requireProject,async(req,res)=>{
   const index=Number(req.params.index),content=characterArtifactContent(req.project.id),character=content?.characters?.[index];if(!character)return res.status(404).json({error:"请先生成人物人设"});
-  if(activeProvider().id!=="minimax")return res.status(400).json({error:"目前只支持使用 MiniMax 生图；当前使用其他模型时，可以手动上传人物图片。"});
-  const key=config.providerKeys.minimax;if(!key)return res.status(400).json({error:"生成形象图需要先在模型设置中保存 MiniMax API Key。"});
+  const imageProvider=activeImageProvider();if(!imageProvider.apiKey)return res.status(400).json({error:"文生图是可选功能；如需使用，请先在模型设置中配置文生图 API，也可以直接手动上传人物图片。"});
   const prompt=completeCharacterImagePrompt(content,character);
-  const response=await fetch("https://api.minimaxi.com/v1/image_generation",{method:"POST",headers:{Authorization:`Bearer ${key}`,"Content-Type":"application/json"},body:JSON.stringify({model:"image-01",prompt,aspect_ratio:"2:3",response_format:"base64",n:1,prompt_optimizer:true})});
-  const data=await response.json().catch(()=>({}));if(!response.ok||data.base_resp?.status_code) return res.status(400).json({error:data.base_resp?.status_msg||data.error?.message||`MiniMax 图片接口错误 ${response.status}`});
-  const encoded=data.data?.image_base64?.[0];if(!encoded)return res.status(400).json({error:"MiniMax 未返回图片数据"});
-  const target=path.join(config.uploadsDir,`character-${req.project.id}-${index}-${Date.now()}.jpeg`);fs.writeFileSync(target,Buffer.from(encoded,"base64"));const saved=saveCharacterImage(req.project.id,index,character.name||`人物${index+1}`,target,"minimax",prompt);res.json({...saved,url:`/character-images/${saved.id}`});
+  const generated=await generateImage({providerId:imageProvider.id,apiKey:imageProvider.apiKey,baseUrl:imageProvider.baseUrl,model:imageProvider.model,prompt});
+  const extension=generated.mimeType==="image/png"?".png":generated.mimeType==="image/webp"?".webp":".jpeg",target=path.join(config.uploadsDir,`character-${req.project.id}-${index}-${Date.now()}${extension}`);fs.writeFileSync(target,generated.bytes,{flag:"wx"});const saved=saveCharacterImage(req.project.id,index,character.name||`人物${index+1}`,target,imageProvider.id,prompt);res.json({...saved,url:`/character-images/${saved.id}`});
 });
 app.post("/api/projects/:id/characters/:index/image-prompt/regenerate",requireProject,async(req,res,next)=>{try{
   const index=Number(req.params.index),content=characterArtifactContent(req.project.id),character=content?.characters?.[index];

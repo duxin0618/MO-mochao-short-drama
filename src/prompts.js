@@ -25,6 +25,16 @@ const storyModeRule=(project,stage)=>project.story_mode==="miniprogram"?`【剧�
 ${stage==="outline"?"05负责发明并锁定上述神剧情。重要虐点应明确写出：被利用的软肋、具体伤害载体、受害者为何反常配合、施害者用什么歪理要求牺牲、谁继续站队补刀、产生什么可见后果、背后荒谬私利何时揭开。每个阶段轮换身体伤害、情感背叛、亲友背刺、身份剥夺、孩子或亲情掠夺、财产生存权剥夺、公共羞辱、极端装置惩罚等不同维度，避免整本只重复同一种虐法。关键节点后让受害者或主角突然作出同等级、立即生效且改变关系的反常决定；必须写清具体行动，不能只写心灰意冷、决定反击或以后报仇，并用该行动或其即时后果形成可承接钩子。":"06只负责把05已经锁定的软肋、伤害载体、反常配合、歪理、补刀、可见后果、荒谬私利和反常决定完整展开。不得主动合理化、降级成普通争吵、替人物恢复正常理性，也不得临时另造新的重大酷刑或背叛抢走既定事件链；对话要逐层揭露，每一轮都新增事实、代价或关系变化。只要05没有明确规定长期残疾、永久失去能力或持续昏迷，严重伤势默认可快速恢复并继续剧情，不补写治疗过程或现实医学解释。"}
 小程序风只放宽现实尺度、生理恢复与人物情感理性，不放宽姓名、身份、首登场集、人物知情、金手指持有者、秘密揭露顺序、道具归属、必须发生链条和集尾钩子的连续性。当前情绪强度只决定对白、羞辱、压迫与反扑的表达密度：选择“强烈”也不得削弱05既定的离谱事件，选择“异常强烈”也不得越过05临时新增重大伤害。`:"";
 
+const narrativeLengthRule=(project,stage)=>{
+  if(project.narrative_length!=="short")return "";
+  if(stage==="spine")return `【作品体量｜短篇｜全剧节奏】
+每集聚焦一个连续处境中的一小段推进，通常只产生1–2次宏观状态跃迁。让危机、试探、受阻、反扑、揭露和结果能够跨集逐步展开；相邻集必须承接上一集尚未走完的处境，不能一集连续完成多轮重大转折。骨架只锁定每集推进到哪一步及其因果承接，不展开具体对白和表演细节。`;
+  if(stage==="outline")return `【作品体量｜短篇】
+每集只围绕一个核心处境、危机或交锋推进，通常只产生1–2次会改变后续走向的宏观状态跃迁，不得接连开启互不相干的新任务、新敌人和新矛盾。05在这个单一处境内部完成危机落地、尝试、受阻或反扑、局势升级、局部结果或信息反转，并停在可承接钩子。必须发生可以包含多个动作节点，但它们必须属于同一轮处境的连续攻防。钩子只推进当前处境的下一拍，不得提前消费下一集的解决、揭露或反击。dramatic_design控制在180–320个汉字，summary控制在120–220个汉字；用具体事件写满信息，不输出分析过程。`;
+  return `【作品体量｜短篇】
+短篇每集只围绕05锁定的一个核心处境推进。不得因为篇幅充足而另开宏观支线；小说在单一处境内部充分设计行动、对白攻防、阻力、反扑、局部结果和选择，剧本忠实拍出这些内部节拍，不得把短篇模式重新压缩成多项大事件，也不得越过必须发生最后节点续写。`;
+};
+
 const stageOrder = ["idea", "planning", "characters", "cards", "outline"];
 const seedForStage=(stage,project)=>{
   const seed=String(project?.seed||"").trim();
@@ -83,7 +93,7 @@ function context(stage, project, constraints, artifacts, evidence = [], range = 
   };
   const effectiveHardConstraints=stage==="state_update"?[]:constraintsInRange(constraints,range);
   return JSON.stringify({
-    project: { title: project.title, tags: project.tags, totalEpisodes: project.total_episodes, audience: project.audience, platform: project.platform, restrictions: project.restrictions, seed: seedForStage(stage,project,artifacts), storyMode:project.story_mode||"normal", ...(["episode","quality"].includes(stage)?{emotionIntensity:project.emotion_intensity||"strong"}:{}) },
+    project: { title: project.title, tags: project.tags, totalEpisodes: project.total_episodes, audience: project.audience, platform: project.platform, restrictions: project.restrictions, seed: seedForStage(stage,project,artifacts), storyMode:project.story_mode||"normal", narrativeLength:project.narrative_length||"long", ...(["episode","quality"].includes(stage)?{emotionIntensity:project.emotion_intensity||"strong"}:{}) },
     hardConstraints: effectiveHardConstraints,
     approvedArtifacts: allowedArtifacts.filter(x => x.status === "approved").map(compact),
     ideaEvidence: evidence
@@ -137,6 +147,7 @@ export function buildOutlineSpinePrompt(project,constraints,artifacts){
   return `${shared}
 ${shortDramaEngine}
 ${storyModeRule(project,"outline")}
+${narrativeLengthRule(project,"spine")}
 项目输入：${context("outline",project,constraints,artifacts)}
 
 现在只规划覆盖全剧的“因果坐标”，不要写详细分集梗概、对白、场次或必须发生。宏观材料必须先被翻译成可持续推进的戏剧资源：人物现实目标与软肋、对手可采取的施压手段、金手指成长边界、关键关系、秘密揭露顺序、卡点及结局。
@@ -155,6 +166,7 @@ export function buildOutlineDramaticBatchPrompt(project,constraints,artifacts,sp
   return `${shared}
 ${shortDramaEngine}
 ${storyModeRule(project,"outline")}
+${narrativeLengthRule(project,"outline")}
 项目输入：${context("outline",project,constraints,artifacts,[],{start:Math.min(...currentSpine.map(item=>Number(item.episode_no))),end:Math.max(...currentSpine.map(item=>Number(item.episode_no)))})}
 
 你正在把全剧因果坐标中的一个小窗口设计成真正有戏的短剧分集，不是一次完成最终字段。
@@ -186,6 +198,7 @@ export function buildOutlineFinalizePrompt(project,constraints,artifacts,spine,c
   return `${shared}
 ${shortDramaEngine}
 ${storyModeRule(project,"outline")}
+${narrativeLengthRule(project,"outline")}
 项目输入：${context("outline",project,constraints,artifacts,[],{start:Math.min(...currentSpine.map(item=>Number(item.episode_no))),end:Math.max(...currentSpine.map(item=>Number(item.episode_no)))})}
 
 你是分集梗概连续性编辑。核对下面这批戏剧设计，修正后直接返回最终分集字段；不要输出检查报告。
@@ -243,9 +256,11 @@ export function buildPlanningSectionPrompt(section, project, constraints, artifa
   return `${shared}\n\n任务：${rules[section]}\n只输出包含 ${section} 的 JSON 对象，不输出其他字段。\n\n项目基础：\n${JSON.stringify({title:project.title,seed:project.seed,totalEpisodes:project.total_episodes,tags:project.tags},null,2)}\n\n已确认创意：\n${JSON.stringify(idea,null,2)}\n\n当前故事策划（除目标字段外均为不可改动的上下文）：\n${JSON.stringify(planning,null,2)}\n\n硬约束：\n${JSON.stringify(constraints.filter(x=>x.kind==="hard"),null,2)}`;
 }
 
-export function buildEpisodeBoundariesPrompt(summary, hook, episodeNo=0, previousRequiredPlot="", constraints=[]) {
+export function buildEpisodeBoundariesPrompt(summary, hook, episodeNo=0, previousRequiredPlot="", constraints=[], project={}) {
   const continuity=Number(episodeNo)>1?`本集是EP${String(episodeNo).padStart(2,"0")}。生成“必须发生”时，必须参考上一集事件链，上一集最后一项就是上一集钩子。本集第一项必须直接完成这个钩子的爽点兑现，而不是只写承接、准备或出手：把主角使用上一集已备好的能力、证据、资源或行动，与对手丢脸、认输、受损、被迫退让或局势翻转的可见结果合并为同一个首节点。禁止以“亮出证据、发动能力、来到现场、准备出手、众人震惊”等尚未产生结果的动作作为第一项。当本集梗概没有明写兑现时，爽点兑现优先，必须依据上一集钩子补出最小、直接、不改变本集后续走向的兑现事件；这是唯一允许超出本集梗概字面的补充。第二节点必须利用这次兑现的结果，自然过渡到本集梗概的第一个既定事件；之后完全回归本集梗概，并继续执行“大部分新压制→后段破局→下一集钩子”。不得重复钩子、跳时空、换冲突、重新铺垫或借兑现新增支线。`:"本集是EP01，不需要承接上一集事件链。";
   return `你是微短剧的写作边界编辑。主要根据下面给出的“本集大概内容”和“集尾钩子”提炼两个字段；上一集链条仅用于确定本集开头如何承接，不得挪用上一集其他事件。
+
+${narrativeLengthRule(project,"outline")}
 
 【必须发生】应尽可能完整提取所有不可遗漏的可拍事件，包括关键人物行动、冲突、信息出现、关系或局势变化，以及抵达钩子前必须完成的结果；使用分号连接，不写空泛目标，不新增原文没有的事件。
 【不得揭示】只写本集梗概明确保留到钩子之后、或本集只能铺垫而不能提前说破的信息；不得凭空创造秘密。确实没有时只写一个“无”；有多项时必须写在同一行，用中文分号“；”连接，不使用数字编号、项目符号、顿号清单或换行。
@@ -269,7 +284,7 @@ ${Number(episodeNo)>1?String(previousRequiredPlot||"未提供").trim():"无，EP
 ${hardConstraintText(constraints,{start:Number(episodeNo),end:Number(episodeNo)})}`;
 }
 
-export function buildEpisodeBoundaryPrompt(summary, hook, field, episodeNo=0, previousRequiredPlot="", constraints=[]) {
+export function buildEpisodeBoundaryPrompt(summary, hook, field, episodeNo=0, previousRequiredPlot="", constraints=[], project={}) {
   const task=field==="must_not_reveal"
     ? `只提炼“不得揭示”：写出本集只能铺垫、必须留到钩子之后或后续集才能说破的信息。只能依据输入判断，不得凭空创造秘密。输出只有两种合法形式：确实没有时只写一个“无”；有多项时全部写在同一行，各项用中文分号“；”连接。严禁数字编号、项目符号、顿号清单、字段名和换行。每项只写一个暂不能说破的具体信息，不写原因或解释。`
     : `只提炼“必须发生”。它是一条从本集梗概抽出的、剧本正文必须实际演出来的事件因果链，不是人物设定，不是摘要，不能逐句复述，也不能只改写集尾钩子。
@@ -286,6 +301,8 @@ export function buildEpisodeBoundaryPrompt(summary, hook, field, episodeNo=0, pr
 
 梗概中“尚不知道、背后其实、未来将发现”等作者掌握但本集人物和观众不应得知的背景，不得列入必须发生。输出通常为 4–7 个事件节点，每项尽量控制在 12–30 个汉字，严格按照戏剧因果与发生顺序用“→”连接成一行。每个节点只写“谁遭遇或做了什么、造成什么关键变化”，不标注“抑、爽、转折”等分析标签，不使用序号、分号或换行，不扩写场景，不新增输入中没有的事件。`;
   return `你是微短剧的写作边界编辑。${task}
+
+${narrativeLengthRule(project,"outline")}
 
 只输出该字段的正文内容，不加字段名、标题、JSON、Markdown、解释或其他字段。
 
@@ -387,6 +404,7 @@ export function buildEpisodeNovelPrompt(project, constraints, artifacts, episode
   return `你是中国微短剧的小说中间稿编剧。严格执行内置工作流；模板只能限定篇幅与格式，不能改变文风或剧情边界。
 
 ${storyModeRule(project,"writing")}
+${narrativeLengthRule(project,"writing")}
 
 【本集适用硬约束｜已按集数筛选】
 ${hardConstraintText(constraints,{start:Number(episode?.episode_no),end:Number(episode?.episode_no)})}
@@ -574,6 +592,7 @@ export function buildSkillEpisodePrompt(project, constraints, artifacts, episode
   return `${base}
 
 ${storyModeRule(project,"writing")}
+${narrativeLengthRule(project,"writing")}
 
 任务：把已经完成的小说中间稿转换为可直接拍摄的微短剧剧本。小说已经完成剧情设计，不得另写剧情、调换事件、替换钩子或参考本集旧稿。
 

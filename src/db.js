@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS projects (
   total_episodes INTEGER NOT NULL DEFAULT 60,
   audience TEXT DEFAULT '', platform TEXT DEFAULT '', restrictions TEXT DEFAULT '',
   seed TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'idea',
-  current_stage TEXT NOT NULL DEFAULT 'idea', template_id TEXT NOT NULL DEFAULT 'default', idea_libraries_json TEXT NOT NULL DEFAULT '[]', story_mode TEXT NOT NULL DEFAULT 'normal',
+  current_stage TEXT NOT NULL DEFAULT 'idea', template_id TEXT NOT NULL DEFAULT 'default', idea_libraries_json TEXT NOT NULL DEFAULT '[]', story_mode TEXT NOT NULL DEFAULT 'normal', narrative_length TEXT NOT NULL DEFAULT 'long',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -318,6 +318,7 @@ try { db.exec("ALTER TABLE projects ADD COLUMN sort_order INTEGER"); } catch {}
 try { db.exec("ALTER TABLE projects ADD COLUMN deleted_at TEXT"); } catch {}
 try { db.exec("ALTER TABLE projects ADD COLUMN idea_libraries_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
 try { db.exec("ALTER TABLE projects ADD COLUMN story_mode TEXT NOT NULL DEFAULT 'normal'"); } catch {}
+try { db.exec("ALTER TABLE projects ADD COLUMN narrative_length TEXT NOT NULL DEFAULT 'long'"); } catch {}
 try { db.exec("ALTER TABLE knowledge_items ADD COLUMN item_type TEXT NOT NULL DEFAULT 'source'"); } catch {}
 try { db.exec("ALTER TABLE knowledge_items ADD COLUMN confidence REAL NOT NULL DEFAULT 0.5"); } catch {}
 try { db.exec("ALTER TABLE knowledge_items ADD COLUMN expires_at TEXT"); } catch {}
