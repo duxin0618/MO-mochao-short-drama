@@ -47,6 +47,11 @@ export const config = {
     moonshot: process.env.MOONSHOT_API_KEY || "",
     baidu: process.env.BAIDU_QIANFAN_API_KEY || "",
     sensenova: process.env.SENSENOVA_API_KEY || "",
+    tencent_tokenhub: process.env.TENCENT_TOKENHUB_API_KEY || "",
+    tencent_tokenplan: process.env.TENCENT_TOKENHUB_API_KEY || "",
+    aibh: process.env.AIBH_API_KEY || "",
+    pinai: process.env.PINAI_API_KEY || "",
+    geeknow: process.env.GEEKNOW_API_KEY || "",
     custom: process.env.CUSTOM_API_KEY || (process.env.LLM_PROVIDER === "qwen" ? process.env.DASHSCOPE_API_KEY || "" : "")
   }
 };
@@ -64,6 +69,11 @@ export const providerDefaults = {
     {id:"glm-5.2",label:"GLM-5.2"},
     {id:"kimi-k3",label:"Kimi K3"}
   ] },
+  tencent_tokenhub: { label:"腾讯云 TokenHub", baseUrl:"https://tokenhub.tencentmaas.com/v1", model:"glm-5.3", protocol:"chat_completions" },
+  tencent_tokenplan: { label:"腾讯云 Token Plan", baseUrl:"https://tokenhub.tencentmaas.com/plan/v3", model:"glm-5.3", protocol:"chat_completions" },
+  aibh: { label:"AI博汇", baseUrl:"https://api.aibh.site/v1", model:"", protocol:"chat_completions" },
+  pinai: { label:"PinAI", baseUrl:"https://api.pinai.cn/v1", model:"", protocol:"chat_completions" },
+  geeknow: { label:"GeekNow", baseUrl:"https://geeknow.ai/v1", model:"", protocol:"chat_completions" },
   custom: { label:"其他 OpenAI-compatible API", baseUrl:"", model:"", protocol:"chat_completions" },
   mock: { label:"离线界面演示", baseUrl:"", model:"local-demo", protocol:"mock" }
 };

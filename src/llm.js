@@ -721,10 +721,10 @@ function mock(stage, project, extra = {}) {
   if(stage==="outline_chunk")return {episodes:Array.from({length:extra.end-extra.start+1},(_,i)=>{const no=extra.start+i;return {episode_no:no,title:`第${no}集`,summary:`推进第 ${no} 集的阶段目标并产生新的状态变化。`,scene_treatment:"人物因明确需求进入场景，行动招致阻力，冲突连续升级并以新危险收尾。",hook:"结尾出现下一集必须直接承接的新危险。",purpose:"推进主线",start_state:"承接上一集",end_state:"形成新压力",required_plot:"发生有效剧情推进",must_reveal:"",must_not_reveal:"未到节点的秘密",rhythm:"快速推进",emotion:"压力升高→悬置",card_relation:"按阶段蓄力或兑现"}})};
   if(stage==="outline_spine")return {episodes:Array.from({length:extra.end-extra.start+1},(_,i)=>{const no=extra.start+i;return {episode_no:no,phase:"主线阶段",inherited_state:no===1?"核心困境正在发生":`承接EP${no-1}结尾行动`,dramatic_task:"人物为现实目标面对具体阻力",state_change:"冲突造成新的局势变化",ending_action:`一个必须由EP${no+1}承接的具体行动出现`,future_boundary:"后续秘密不得提前揭示",first_appearance_characters:no===1?"待定":"无"}})};
   if(stage==="outline_dramatic")return {episodes:Array.from({length:extra.end-extra.start+1},(_,i)=>{const no=extra.start+i;return {episode_no:no,title:`第${no}集`,dramatic_design:"人物从已经发生的危机直接行动，对手基于利益采取具体施压，现实后果迫使人物作出选择，新的行动在结尾出现。",summary:"人物为解决现实危机采取行动，对手以具体行为加压并造成可见后果，人物被迫选择后迎来新的危险。",hook:"新的危险或行动在结尾发生。",purpose:"推进主线并改变局势",start_state:"承接上一集",end_state:"形成新的行动压力",rhythm:"危机切入→升级→选择→钩子",emotion:"受压→加剧→转机→悬置",card_relation:"按阶段蓄力或兑现",first_appearance_characters:no===1?"待定":"无"}})};
-  if(stage==="outline_finalize")return {episodes:Array.from({length:extra.end-extra.start+1},(_,i)=>{const no=extra.start+i;return {episode_no:no,title:`第${no}集`,summary:"人物从已经发生的危机直接行动，对手以现实利益施压并造成可见后果，人物应对后被迫作出选择，新的危险随即出现。",hook:"新的危险或行动在结尾发生。",purpose:"推进主线并改变局势",start_state:"承接上一集结尾",end_state:"形成新的行动压力",required_plot:"人物直接应对开场危机→对手采取具体施压行为→现实后果迫使人物改变选择→人物获得转机并采取行动→新的危险在结尾出现",must_reveal:"",must_not_reveal:"无",rhythm:"危机切入→升级→选择→钩子",emotion:"受压→加剧→转机→悬置",card_relation:"按阶段蓄力或兑现",first_appearance_characters:no===1?"待定":"无"}})};
+  if(stage==="outline_finalize")return {episodes:Array.from({length:extra.end-extra.start+1},(_,i)=>{const no=extra.start+i;return {episode_no:no,title:`第${no}集`,summary:"人物从已经发生的危机直接行动，对手以现实利益施压并造成可见后果，人物应对后被迫作出选择，新的危险随即出现。",hook:"新的危险或行动在结尾发生。",purpose:"推进主线并改变局势",start_state:"承接上一集结尾",end_state:"形成新的行动压力",required_plot:"人物直接应对当前危机→对手施压并造成现实后果→关键信息迫使人物改变选择→新的危险或行动在结尾发生",must_reveal:"",must_not_reveal:"无",rhythm:"危机切入→升级→选择→钩子",emotion:"受压→加剧→转机→悬置",card_relation:"按阶段蓄力或兑现",first_appearance_characters:no===1?"待定":"无"}})};
   if(stage==="scene_treatment_text")return "人物因明确需求进入核心场景，当前行动直接招致阻力；冲突双方在同一空间连续交锋，上一事件造成的后果立即触发下一事件，最终准确落到既定钩子。";
-  if(stage==="episode_boundaries_text")return "【必须发生】完成本集梗概中的关键行动、冲突与状态变化；准确抵达既定钩子\n【不得揭示】无";
-  if(stage==="episode_boundary_text")return "完成本集梗概中的关键行动、冲突与状态变化；准确抵达既定钩子";
+  if(stage==="episode_boundaries_text")return "【必须发生】人物进入当前处境→对手施压并造成后果→关键信息迫使人物改变选择→既定钩子在结尾发生\n【不得揭示】无";
+  if(stage==="episode_boundary_text")return "人物进入当前处境→对手施压并造成后果→关键信息迫使人物改变选择→既定钩子在结尾发生";
   if(stage==="episode_plan_text")return "【场景1】核心场景｜人物面对迫近问题\n必要动作：用最少环境与道具建立处境。\n对白回合：提出要求，对方拒绝，压力升级并作出选择。\n【覆盖检查】必须发生均落入节拍，不提前揭示。\n【钩子落点】既定危险或信息出现后立刻停。";
   if(stage==="episode_novel_summary")return "关键事件：上一章的核心冲突已经发生并造成明确结果。\n人物与状态：人物关系、认知、能力与关键道具保持上一章结尾状态。\n精确锚点：无。\n结尾局面：主角正面对尚未结束的现场局面，并准备执行已经启动的即时行动。";
   if(stage==="episode_novel")return project.narrative_person==="third"?`主角被逼到核心场景的角落，眼前的问题已经没有退路。对手步步紧逼，他只能抓住最后的机会。\n\n「这件事还没结束。」主角迎着对手走过去，「你欠下的结果，现在该兑现了。」`:`我被逼到核心场景的角落，眼前的问题已经没有退路。对手步步紧逼，我只能抓住最后的机会。\n\n「这件事还没结束。」我迎着他走过去，「你欠下的结果，现在该兑现了。」`;
@@ -833,18 +833,27 @@ export async function generate({ stage, project, prompt, extra = {}, schema = nu
     try{output=stage==="episode"?lockScriptSceneHeadings(scriptRepairPrompt?applyMissingScriptScenes(previousOutput,plainText,extra):forbiddenSceneRepairPrompt?applyForbiddenScriptScenes(previousOutput,plainText):cleanEpisodeText(content),extra.episode?.episode_plan):stage==="episode_novel"?splitNovelLongParagraphs(normalizeNovelText(plainText)):stage==="episode_arrangement"&&localRepairPrompt?applyLocalArrangementRepair(previousOutput,plainText,arrangementPatchBasis):stage==="episode_arrangement"?normalizeEpisodeArrangementText(plainText):stage==="episode_novel_summary"?plainText:stage==="episode_boundary_text"?cleanBoundaryText(content,extra.boundaryField):content;}
     catch(error){lastError=error;output=previousOutput;if(attempt<maxAttempts-1)continue;throw error;}
     if(!schema){
+      if(stage==="episode_boundaries_text"){
+        const required=String(output||"").match(/【必须发生】\s*([\s\S]*?)(?=\n\s*【不得揭示】|$)/)?.[1]?.trim()||"";
+        const nodes=required.split(/→/).map(x=>x.trim()).filter(Boolean),actual=nodes.length;
+        if(actual!==4){lastError=new Error(`必须发生应为4段无标签箭头结构，实际${actual}段；只重组该字段，不增删梗概事实`);if(attempt<maxAttempts-1)continue;throw lastError;}
+        if(nodes.some(node=>/^(?:起|承|转|合|节点\s*[一二三四1234])\s*[：:、]/.test(node))){lastError=new Error("必须发生不得显示起承转合或节点编号，只保留四段事件正文");if(attempt<maxAttempts-1)continue;throw lastError;}
+      }
       if(stage==="episode_boundary_text"&&extra.boundaryField==="required_plot"&&extra.requiresOpeningPayoff){
         const firstNode=String(output||"").split(/→|[；;\n]+/).map(x=>x.trim()).filter(Boolean)[0]||"";
         const hasPreparation=/(?:准备|正要|即将|试图|打算|来到|赶到|走进|亮出|拿出|掏出|发动|启动|开始|对峙|等待|盯着|看见|听见|众人震惊|对手震惊)/.test(firstNode);
         const hasVisiblePayoff=/(?:反击|打脸|揭露|揭穿|证明|赢|击败|制服|救出|夺回|保住|迫使|逼|认输|道歉|退让|退款|退钱|退货|赔偿|丢脸|尴尬|受损|失去|翻转|扭转|解除|赶走|震住|哑口无言|无话可说|改口|被抓|被打|被赶|被撤|被夺|被罚|当场.+(?:承认|退|败|输|倒|停|改口))/.test(firstNode);
         if(hasPreparation&&!hasVisiblePayoff){lastError=new Error(`首节点仍停在准备动作，没有写出上一集钩子的兑现结果：${firstNode||"空"}`);if(attempt<maxAttempts-1)continue;throw lastError;}
       }
-      if(stage==="episode_boundary_text"&&extra.boundaryField==="required_plot"&&Number(extra.minBoundaryItems)>0&&String(output||"").split(/→|[；;\n]+/).filter(Boolean).length<Number(extra.minBoundaryItems)){
-        const actual=String(output||"").split(/→|[；;\n]+/).filter(Boolean).length;
-        lastError=new Error(`只提炼出 ${actual} 项，至少需要覆盖 ${extra.minBoundaryItems} 项关键事件`);
+      if(stage==="episode_boundary_text"&&extra.boundaryField==="required_plot"&&Number(extra.requiredBoundaryItems)>0&&String(output||"").split(/→/).map(x=>x.trim()).filter(Boolean).length!==Number(extra.requiredBoundaryItems)){
+        const actual=String(output||"").split(/→/).map(x=>x.trim()).filter(Boolean).length;
+        lastError=new Error(`提炼结果应为 ${extra.requiredBoundaryItems} 段无标签箭头结构，实际 ${actual} 段；请只重组为A→B→C→D，不增删梗概事实`);
+        if(attempt<maxAttempts-1)continue;
+      }else if(stage==="episode_boundary_text"&&extra.boundaryField==="required_plot"&&String(output||"").split(/→/).some(node=>/^(?:起|承|转|合|节点\s*[一二三四1234])\s*[：:、]/.test(node.trim()))){
+        lastError=new Error("必须发生不得显示起承转合或节点编号，只保留四段事件正文");
         if(attempt<maxAttempts-1)continue;
       }else if(stage==="episode_boundary_text"&&extra.boundaryField==="required_plot"&&String(output||"").length>420){
-        lastError=new Error(`提炼结果 ${String(output).length} 字，仍在复述梗概；请压缩为 4–7 个关键事件簇`);
+        lastError=new Error(`提炼结果 ${String(output).length} 字，仍在复述梗概；请压缩为四段关键事件簇并用箭头连接`);
         if(attempt<maxAttempts-1)continue;
       }else if(stage==="episode"&&!String(output||"").trim()){
         lastError=new Error(`${provider.label} 返回了空剧本正文（finish_reason=${choice?.finish_reason||"未知"}，completion_tokens=${response.usage?.completion_tokens||0}）`);

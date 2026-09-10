@@ -145,11 +145,13 @@ app.put("/api/settings/llm", (req, res) => {
   const suppliedKey = String(req.body.api_key || "").trim();
   const key = suppliedKey || config.providerKeys[provider] || "";
   if (provider !== "mock" && !key) return res.status(400).json({ error: "使用在线模型时必须填写 API Key" });
+  if (provider !== "mock" && !model) return res.status(400).json({ error: "请填写该平台实际提供的模型 ID，不能填写供应商名称" });
+  if (["tencent_tokenhub","tencent_tokenplan"].includes(provider) && /console\.cloud\.tencent\.com/i.test(baseUrl)) return res.status(400).json({ error: "这里需要填写腾讯云 API Base URL，不能填写腾讯云控制台网页地址" });
   if (provider === "custom" && !baseUrl) return res.status(400).json({ error: "自定义接口必须填写 Base URL" });
   const envPath = path.join(config.root, ".env");
   const existing = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf8").split(/\r?\n/) : [];
   const values = new Map(existing.filter(Boolean).map(line => { const i=line.indexOf("="); return i>0?[line.slice(0,i),line.slice(i+1)]:[line,""]; }));
-  const keyName={openai:"OPENAI_API_KEY",minimax:"MINIMAX_API_KEY",zhipu:"ZHIPU_API_KEY",deepseek:"DEEPSEEK_API_KEY",moonshot:"MOONSHOT_API_KEY",baidu:"BAIDU_QIANFAN_API_KEY",sensenova:"SENSENOVA_API_KEY",custom:"CUSTOM_API_KEY"}[provider];
+  const keyName={openai:"OPENAI_API_KEY",minimax:"MINIMAX_API_KEY",zhipu:"ZHIPU_API_KEY",deepseek:"DEEPSEEK_API_KEY",moonshot:"MOONSHOT_API_KEY",baidu:"BAIDU_QIANFAN_API_KEY",sensenova:"SENSENOVA_API_KEY",tencent_tokenhub:"TENCENT_TOKENHUB_API_KEY",tencent_tokenplan:"TENCENT_TOKENHUB_API_KEY",aibh:"AIBH_API_KEY",pinai:"PINAI_API_KEY",geeknow:"GEEKNOW_API_KEY",custom:"CUSTOM_API_KEY"}[provider];
   values.set("LLM_PROVIDER", provider); values.set("OPENAI_MODEL", model); values.set("LLM_BASE_URL", baseUrl); if (keyName&&key) values.set(keyName,key);
   fs.writeFileSync(envPath, [...values].map(([k,v]) => `${k}=${v}`).join("\n") + "\n", { encoding:"utf8", mode:0o600 });
   config.llmProvider=provider; config.openaiModel=model; config.baseUrl=baseUrl; if(key) config.providerKeys[provider]=key;
@@ -159,7 +161,10 @@ app.post("/api/settings/llm/test", async(req,res)=>{
   const providerId=providerDefaults[req.body.provider]?req.body.provider:"custom";
   const preset=providerDefaults[providerId];
   const apiKey=String(req.body.api_key||"").trim()||config.providerKeys[providerId]||"";
-  try{const result=await testConnection({providerId,apiKey,baseUrl:String(req.body.base_url||preset.baseUrl).trim().replace(/\/$/,""),model:String(req.body.model||preset.model).trim()});res.json({...result,providerLabel:preset.label});}
+  const baseUrl=String(req.body.base_url||preset.baseUrl).trim().replace(/\/$/,""),model=String(req.body.model||preset.model).trim();
+  if(["tencent_tokenhub","tencent_tokenplan"].includes(providerId)&&/console\.cloud\.tencent\.com/i.test(baseUrl))return res.status(400).json({ok:false,error:"这里需要填写腾讯云 API Base URL，不能填写腾讯云控制台网页地址"});
+  if(providerId!=="mock"&&!model)return res.status(400).json({ok:false,error:"请填写该平台实际提供的模型 ID，不能填写供应商名称"});
+  try{const result=await testConnection({providerId,apiKey,baseUrl,model});res.json({...result,providerLabel:preset.label});}
   catch(error){res.status(400).json({ok:false,error:error.message||String(error)});}
 });
 app.put("/api/settings/embedding",(req,res)=>{

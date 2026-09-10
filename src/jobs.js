@@ -186,8 +186,8 @@ async function runEpisodeBoundary(job,project){
   if(!["连锁重生成必须发生","逐集重生成不得揭示"].includes(job.type))run("UPDATE jobs SET message=@message WHERE id=@id",{message:`正在单独生成${field==="required_plot"?"必须发生":"不得揭示"}`,id:job.id});
   const previous=field==="required_plot"&&episode.episode_no>1?get("SELECT required_plot,hook FROM episodes WHERE project_id=@pid AND episode_no=@no",{pid:project.id,no:episode.episode_no-1}):null;
   const prompt=buildEpisodeBoundaryPrompt(episode.summary,episode.hook,field,episode.episode_no,previous?.required_plot||previous?.hook||"",constraintsFor(project.id),project);
-  const summaryEventFloor=field==="required_plot"?4:0;
-  const result=await generate({stage:"episode_boundary_text",project,prompt,extra:{boundaryField:field,minBoundaryItems:summaryEventFloor,requiresOpeningPayoff:field==="required_plot"&&episode.episode_no>1},signal:currentSignal()});
+  const requiredBoundaryItems=field==="required_plot"?4:0;
+  const result=await generate({stage:"episode_boundary_text",project,prompt,extra:{boundaryField:field,requiredBoundaryItems,requiresOpeningPayoff:field==="required_plot"&&episode.episode_no>1},signal:currentSignal()});
   let value=String(result.output||"").replace(/<think>[\s\S]*?<\/think>/gi,"").replace(/^```(?:text|plaintext|markdown)?\s*/i,"").replace(/\s*```$/i,"").trim();
   value=value.replace(/^\s*(?:【?(?:必须发生|不得揭示)】?\s*[：:]?\s*|(?:required_plot|must_not_reveal)\s*[：:]\s*)/i,"").trim();
   if(field==="must_not_reveal"){
@@ -314,7 +314,8 @@ async function runOutlineBatched(job,project){
       for(let i=0;i<episodes.length;i++){
         const expected=start+i;if(Number(episodes[i].episode_no)!==expected)semanticIssues.push(`缺少或重复EP${expected}`);
         const nodes=String(episodes[i].required_plot||"").split(/→/).map(x=>x.trim()).filter(Boolean);
-        if(nodes.length<4)semanticIssues.push(`EP${expected}必须发生至少需要4个事件节点，实际${nodes.length}个`);
+        if(nodes.length!==4)semanticIssues.push(`EP${expected}必须发生应为4段无标签箭头结构，实际${nodes.length}段`);
+        if(nodes.some(node=>/^(?:起|承|转|合|节点\s*[一二三四1234])\s*[：:、]/.test(node)))semanticIssues.push(`EP${expected}必须发生不得显示“起承转合”或节点编号，只保留四段事件正文`);
         if(!String(episodes[i].summary||"").trim()||!String(episodes[i].hook||"").trim())semanticIssues.push(`EP${expected}梗概或钩子为空`);
         const leaked=outlineStoryWorldEpisodeLeak([episodes[i].summary,episodes[i].hook,episodes[i].required_plot,episodes[i].must_reveal,episodes[i].must_not_reveal].join("\n"));
         if(leaked)semanticIssues.push(`EP${expected}把创作集数泄漏进角色或故事内载体：“${leaked.slice(0,120)}”。保留既定事件，删除故事世界对作品集数的感知；有世界内依据时改为具体日期、约定、证据或威胁，没有依据则删除该预知，不得只换成“不久后”`);
@@ -372,7 +373,7 @@ async function generateEpisodeNovel(project,episode){
   const secondaryIdentifiers=all("SELECT canonical_name FROM memory_secondary_characters WHERE project_id=@pid AND active=1",{pid:project.id}).map(item=>item.canonical_name);
   const characterIdentifiers=[...new Set([...characterCards.map(item=>item.name),...secondaryIdentifiers].filter(Boolean))];
   const goldenKnowledgeEntries=all("SELECT canonical_name name,kind,owner FROM memory_golden_fingers WHERE project_id=@pid AND active=1",{pid:project.id});
-  const novelResult=await generate({stage:"episode_novel",project,prompt:novelPromptWithAppearances,extra:{episode,minEffectiveCharacters:1000,maxEffectiveCharacters:2000,narrativePerson:project.narrative_person==="third"?"third":"first",protagonistIdentifier,characterIdentifiers,forbiddenAppearanceCharacters:appearance.forbidden,goldenKnowledgeEntries,goldenKnowledgeBasis:`${episode.summary||""}\n${episode.required_plot||""}`},signal:currentSignal(),onAttempt:info=>{if(currentSignal()?.aborted)return;const detail=info.retry?`，上一轮未通过：${String(info.lastError).slice(0,90)}`:"";run("UPDATE jobs SET message=@message WHERE project_id=@pid AND type IN ('episode_novel','episode','full_book') AND status='running'",{message:`正在生成 EP${String(episode.episode_no).padStart(2,"0")} 小说（第${info.attempt}/${info.total}轮）${detail}`,pid:project.id});}});
+  const novelResult=await generate({stage:"episode_novel",project,prompt:novelPromptWithAppearances,extra:{episode,minEffectiveCharacters:Number(c.writingGuide?.novelAcceptance?.min)||1000,maxEffectiveCharacters:Number(c.writingGuide?.novelAcceptance?.max)||2000,narrativePerson:project.narrative_person==="third"?"third":"first",protagonistIdentifier,characterIdentifiers,forbiddenAppearanceCharacters:appearance.forbidden,goldenKnowledgeEntries,goldenKnowledgeBasis:`${episode.summary||""}\n${episode.required_plot||""}`},signal:currentSignal(),onAttempt:info=>{if(currentSignal()?.aborted)return;const detail=info.retry?`，上一轮未通过：${String(info.lastError).slice(0,90)}`:"";run("UPDATE jobs SET message=@message WHERE project_id=@pid AND type IN ('episode_novel','episode','full_book') AND status='running'",{message:`正在生成 EP${String(episode.episode_no).padStart(2,"0")} 小说（第${info.attempt}/${info.total}轮）${detail}`,pid:project.id});}});
   const novel=String(novelResult.output||"").trim();
   if(!novel)throw new Error("模型没有返回小说中间稿，已保留原有内容，请重试");
   run("UPDATE episodes SET novel=@novel,novel_summary='',episode_plan='',status='novel_drafted',updated_at=@time WHERE id=@id",{novel,time:now(),id:episode.id});
@@ -394,8 +395,8 @@ async function generateEpisodeScript(project,episode){
   if(!String(episode.novel||"").trim())throw new Error("请先生成并确认小说中间稿");
   if(!String(episode.episode_plan||"").trim())throw new Error("请先生成并确认情绪和剧情安排");
   const c=episodeContext(project,episode);
-  const targetCharacters=Number(c.writingGuide?.generationTarget?.characters)||1750;
-  const minimumCharacters=1000;
+  const minimumCharacters=Number(c.writingGuide?.scriptAcceptance?.min)||700;
+  const maximumCharacters=Number(c.writingGuide?.scriptAcceptance?.max)||1400;
   const characterCards=c.artifacts.find(item=>item.type==="characters")?.content?.characters||[];
   const appearance=characterAppearanceContext(project.id,episode.episode_no,characterCards);
   const protagonistIdentifier=resolveProtagonist(characterCards).name;
@@ -407,7 +408,7 @@ async function generateEpisodeScript(project,episode){
   const basePrompt=buildSkillEpisodePrompt(project,c.constraints,c.artifacts,episode,c.states,c.writingGuide,{previousEnding:c.previousEnding,novel:episode.novel,episodePlan:episode.episode_plan,lockedIdentifiers:c.previousIdentifiers,goldenKnowledgeOwners});
   const promptWithOwners=`${basePrompt}\n\n【人物姓名｜身份】\n${characterIdentityLines||"暂无"}${appearance.text?`\n\n【本集人物出场状态｜硬边界】\n${appearance.text}\n未到首次出场集的人物不得进入现场、行动、说话或联系其他人物；仅被提及姓名不算本人出场。`:""}`;
   const novelNarration=String(episode.novel||"").replace(/「[^」]*」/g,"").replace(/“[^”]*”/g,"").replace(/"[^"\n]*"/g,""),sourceNarrativePerson=/我|我们|咱们/.test(novelNarration)?"first":"third";
-  const result=await generate({stage:"episode",project,prompt:promptWithOwners,extra:{episode,minEffectiveCharacters:minimumCharacters,maxEffectiveCharacters:2000,shortSceneHeading:String(c.writingGuide?.format?.sceneHeading||"").includes("外/内"),lockedIdentifiers:c.previousIdentifiers,protagonistIdentifier,characterIdentifiers,forbiddenAppearanceCharacters:appearance.forbidden,sourceNarrativePerson,goldenKnowledgeEntries,goldenKnowledgeBasis:`${episode.summary||""}\n${episode.required_plot||""}`},signal:currentSignal(),onAttempt:info=>{if(currentSignal()?.aborted)return;const detail=info.retry?`，上一轮未通过：${String(info.lastError).slice(0,90)}`:"";run("UPDATE jobs SET message=@message WHERE project_id=@pid AND type IN ('episode_script','episode','full_book') AND status='running'",{message:`正在生成或修订 EP${String(episode.episode_no).padStart(2,"0")} 剧本（第${info.attempt}/${info.total}轮）${detail}`,pid:project.id});}});
+  const result=await generate({stage:"episode",project,prompt:promptWithOwners,extra:{episode,minEffectiveCharacters:minimumCharacters,maxEffectiveCharacters:maximumCharacters,shortSceneHeading:String(c.writingGuide?.format?.sceneHeading||"").includes("外/内"),lockedIdentifiers:c.previousIdentifiers,protagonistIdentifier,characterIdentifiers,forbiddenAppearanceCharacters:appearance.forbidden,sourceNarrativePerson,goldenKnowledgeEntries,goldenKnowledgeBasis:`${episode.summary||""}\n${episode.required_plot||""}`},signal:currentSignal(),onAttempt:info=>{if(currentSignal()?.aborted)return;const detail=info.retry?`，上一轮未通过：${String(info.lastError).slice(0,90)}`:"";run("UPDATE jobs SET message=@message WHERE project_id=@pid AND type IN ('episode_script','episode','full_book') AND status='running'",{message:`正在生成或修订 EP${String(episode.episode_no).padStart(2,"0")} 剧本（第${info.attempt}/${info.total}轮）${detail}`,pid:project.id});}});
   if(!String(result.output||"").trim())throw new Error("模型没有返回剧本正文，已保留原有内容，请重试");
   const identifiers=extractCharacterIdentifiers(result.output);
   run("UPDATE episodes SET script=@script,character_identifiers_json=@identifiers,status='drafted',updated_at=@time WHERE id=@id",{script:result.output,identifiers:JSON.stringify(identifiers),time:now(),id:episode.id});

@@ -18,7 +18,7 @@ export const ZHIHU_YANXUAN_MANJU_TEMPLATE = {
     targetCharacters:{min:500,ideal:700,max:900},
     novelAcceptance:{min:700,ideal:1000,max:1300},
     scriptAcceptance:{min:500,ideal:700,max:900},
-    targetScenes:{min:1,ideal:2,max:9},
+    targetScenes:{min:1,ideal:2,max:4},
     writingRules:[],
     normalization:[],
     sampleExcerpt:`1 外 近海海面下 日

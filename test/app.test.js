@@ -53,7 +53,7 @@ test("健康检查和完整创作主链", async () => {
   const iframeChild=await fetch(`${base}/vendor/iframeResizer.contentWindow.min.js`);assert.equal(iframeChild.status,200);assert.match(await iframeChild.text(),/iFrameResizer/);
   const home=await fetch(`${base}/`);assert.match(await home.text(),/iframeResizer\.contentWindow\.min\.js/);
   const connection=await request("/api/settings/llm/test",{method:"POST",body:JSON.stringify({provider:"mock"})});assert.equal(connection.body.ok,true);
-  const providerSettings=(await request("/api/settings/llm")).body,baiduText=providerSettings.providers.find(item=>item.id==="baidu"),senseNovaText=providerSettings.providers.find(item=>item.id==="sensenova");assert.equal(baiduText?.baseUrl,"https://qianfan.baidubce.com/v2");assert.equal(baiduText?.model,"ernie-5.0");assert.equal(senseNovaText?.baseUrl,"https://token.sensenova.cn/v1");assert.equal(senseNovaText?.model,"deepseek-v4-flash");assert.deepEqual(senseNovaText?.models?.map(item=>item.id),["deepseek-v4-flash","deepseek-v4-pro","glm-5.2","kimi-k3"]);
+  const providerSettings=(await request("/api/settings/llm")).body,baiduText=providerSettings.providers.find(item=>item.id==="baidu"),senseNovaText=providerSettings.providers.find(item=>item.id==="sensenova"),tencentText=providerSettings.providers.find(item=>item.id==="tencent_tokenhub"),tencentPlanText=providerSettings.providers.find(item=>item.id==="tencent_tokenplan"),aibhText=providerSettings.providers.find(item=>item.id==="aibh"),pinaiText=providerSettings.providers.find(item=>item.id==="pinai"),geeknowText=providerSettings.providers.find(item=>item.id==="geeknow");assert.equal(baiduText?.baseUrl,"https://qianfan.baidubce.com/v2");assert.equal(baiduText?.model,"ernie-5.0");assert.equal(senseNovaText?.baseUrl,"https://token.sensenova.cn/v1");assert.equal(senseNovaText?.model,"deepseek-v4-flash");assert.deepEqual(senseNovaText?.models?.map(item=>item.id),["deepseek-v4-flash","deepseek-v4-pro","glm-5.2","kimi-k3"]);assert.equal(tencentText?.baseUrl,"https://tokenhub.tencentmaas.com/v1");assert.equal(tencentText?.model,"glm-5.3");assert.equal(tencentPlanText?.baseUrl,"https://tokenhub.tencentmaas.com/plan/v3");assert.equal(aibhText?.baseUrl,"https://api.aibh.site/v1");assert.equal(pinaiText?.baseUrl,"https://api.pinai.cn/v1");assert.equal(geeknowText?.baseUrl,"https://geeknow.ai/v1");
   const embeddingConnection=await request("/api/settings/embedding/test",{method:"POST",body:JSON.stringify({provider:"mock"})});assert.equal(embeddingConnection.body.ok,true);assert.ok(embeddingConnection.body.dimensions>0);
   const modelSettings=(await request("/api/settings/llm")).body,baiduEmbedding=modelSettings.embeddingProviders.find(item=>item.id==="baidu");assert.equal(baiduEmbedding?.baseUrl,"https://qianfan.baidubce.com/v2");assert.equal(baiduEmbedding?.model,"bge-large-zh");
   const created=await request("/api/projects",{method:"POST",body:JSON.stringify({title:"测试短剧",total_episodes:6,tags:["悬疑"],seed:"失忆的女主每天收到未来的短信"})});
@@ -69,9 +69,13 @@ test("健康检查和完整创作主链", async () => {
   await request(`/api/projects/${id}/idea-libraries`,{method:"PUT",body:JSON.stringify({libraries:[]})});assert.deepEqual((await request(`/api/projects/${id}`)).body.idea_libraries,[]);
   const builtinTemplate=(await request(`/api/projects/${id}`)).body.templates.find(item=>item.id==="default");
   const zhihuTemplate=(await request(`/api/projects/${id}`)).body.templates.find(item=>item.id==="zhihu-yanxuan-manju");
+  assert.deepEqual(builtinTemplate?.analysis?.inferredScriptFormat?.targetCharacters,{min:700,ideal:1050,max:1400});
+  assert.deepEqual(builtinTemplate?.analysis?.inferredScriptFormat?.scriptAcceptance,{min:700,max:1400});
+  assert.deepEqual(builtinTemplate?.analysis?.inferredScriptFormat?.targetScenes,{min:1,ideal:2,max:4});
   assert.equal(zhihuTemplate?.source,"builtin");
   assert.deepEqual(zhihuTemplate?.analysis?.inferredScriptFormat?.novelCharacters,{min:700,ideal:1000,max:1300});
   assert.deepEqual(zhihuTemplate?.analysis?.inferredScriptFormat?.targetCharacters,{min:500,ideal:700,max:900});
+  assert.deepEqual(zhihuTemplate?.analysis?.inferredScriptFormat?.targetScenes,{min:1,ideal:2,max:4});
   assert.equal((await request(`/api/projects/${id}/template`,{method:"PUT",body:JSON.stringify({template_id:"zhihu-yanxuan-manju"})})).r.status,200);
   assert.equal((await request(`/api/projects/${id}`)).body.template_id,"zhihu-yanxuan-manju");
   assert.equal((await request(`/api/templates/zhihu-yanxuan-manju`,{method:"DELETE"})).r.status,400);
