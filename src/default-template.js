@@ -1,8 +1,8 @@
 export const DEFAULT_TEMPLATE = {
   id:"default", name:"默认专业短剧模板（小说转剧本）", kind:"builtin", version:5,
   planningSections:[
-    {id:"planning",order:1,title:"故事策划",required:true,fields:["title","framework","worldbuilding","synopsis","core_expectations"]},
-    {id:"characters",order:2,title:"人物人设",required:true,fields:["role","name","age","personality","biography","image_prompt","reference_image_optional"]},
+    {id:"planning",order:1,title:"故事策划",required:true,fields:["title","framework","worldbuilding","synopsis","core_expectations","novel_style_optional"]},
+    {id:"characters",order:2,title:"人物人设",required:true,fields:["role","name","age","personality","speech_style_optional","biography","image_prompt","reference_image_optional"]},
     {id:"cards",order:3,title:"卡点与硬约束",required:true,fields:["total_episodes","card_1","card_2","card_3","hard_constraints"]}
   ],
   scriptFormat:{

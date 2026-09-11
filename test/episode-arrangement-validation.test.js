@@ -6,7 +6,14 @@ import path from "node:path";
 
 process.env.APP_DATA_DIR=fs.mkdtempSync(path.join(os.tmpdir(),"mochao-arrangement-test-"));
 process.env.LLM_PROVIDER="mock";
-const { applyLocalArrangementRepair,applyMissingScriptScenes,buildLocalArrangementRepairPrompt,buildMissingScriptScenesPrompt,cleanEpisodeText,consolidateEpisodeArrangementScenes,lockScriptSceneHeadings,normalizeEpisodeArrangementText,novelSceneTransitionCandidates,removeRedundantScreenplayTimeLines,validatePlainOutput }=await import("../src/llm.js");
+const { applyLocalArrangementRepair,applyMissingScriptScenes,buildLocalArrangementRepairPrompt,buildMissingScriptScenesPrompt,cleanEpisodeText,consolidateEpisodeArrangementScenes,lockScriptSceneHeadings,normalizeEpisodeArrangementText,novelDescriptionIssues,novelSceneTransitionCandidates,removeRedundantScreenplayTimeLines,splitNovelLongParagraphs,validatePlainOutput }=await import("../src/llm.js");
+
+test("novel paragraphs allow up to 100 Chinese characters",()=>{
+  const hundred="字".repeat(100),hundredOne="字".repeat(101);
+  assert.deepEqual(novelDescriptionIssues(hundred),[]);
+  assert.equal(novelDescriptionIssues(hundredOne)[0]?.count,101);
+  assert.equal(splitNovelLongParagraphs(`${"字".repeat(60)}。${"字".repeat(41)}。`),`${"字".repeat(60)}。\n\n${"字".repeat(41)}。`);
+});
 
 test("screenplay cleanup removes Markdown wrappers before structural parsing",()=>{
   const cleaned=cleanEpisodeText("**EP01**\n\n**1 \u5185 \u51fa\u79df\u5c4b \u591c**\n\n**\u65b9\u91ce\uff1a\u6211\u56de\u6765\u4e86\u3002**\n\n**\n\n---");

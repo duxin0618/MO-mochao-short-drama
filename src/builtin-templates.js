@@ -1,5 +1,16 @@
 import { DEFAULT_TEMPLATE } from "./default-template.js";
 
+export const NEWCOMER_RECOMMENDED_TEMPLATE = {
+  ...DEFAULT_TEMPLATE,
+  id:"newcomer-recommended",
+  name:"新手推荐",
+  scriptFormat:{
+    ...DEFAULT_TEMPLATE.scriptFormat,
+    novelAcceptance:{min:0,max:5000},
+    scriptAcceptance:{min:0,max:5000}
+  }
+};
+
 export const ZHIHU_YANXUAN_MANJU_TEMPLATE = {
   id:"zhihu-yanxuan-manju",
   name:"知乎盐选（漫剧）",
@@ -39,7 +50,7 @@ Kane发力将钢板尖角刺向鲨鱼眼球。鲨鱼剧烈挣扎，尾鳍狠狠�
   }
 };
 
-export const BUILTIN_TEMPLATES = [DEFAULT_TEMPLATE, ZHIHU_YANXUAN_MANJU_TEMPLATE];
+export const BUILTIN_TEMPLATES = [NEWCOMER_RECOMMENDED_TEMPLATE, DEFAULT_TEMPLATE, ZHIHU_YANXUAN_MANJU_TEMPLATE];
 
 export function builtinTemplateById(id){
   const normalized=String(id||"default");

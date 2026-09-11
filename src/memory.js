@@ -1,8 +1,8 @@
 import crypto from "node:crypto";
 import { all, get, run, now, transaction } from "./db.js";
-import { generate } from "./llm.js";
+import { generate, isTransientTransportError } from "./llm.js";
 import { cosineSimilarity, embedTexts, embeddingConfigured } from "./embeddings.js";
-import { activeEmbeddingProvider } from "./config.js";
+import { activeEmbeddingProvider, activeProvider } from "./config.js";
 
 const text=value=>String(value||"").trim();
 const causalBridgeRules=`因果桥硬规则：直接造成后续系统激活或提示、能力触发、人物受伤、道具变化、危险升级或下一关键行动的动作，是必须保留的因果桥事件；即使很短，也不得因后续结果更显眼而略过。输出前反查每个系统、能力、受伤、道具或重要揭示事件的直接前因；前因出现在当前片段时必须单独提取。普通碰触、无结果动作和气氛不因此收录。`;
@@ -83,7 +83,7 @@ dimensionSchema.properties.resources={type:"array",items:{type:"object",properti
 dimensionSchema.required.push("resources");
 const goldenOnlySchema={type:"object",properties:{golden_fingers:dimensionSchema.properties.golden_fingers},required:["golden_fingers"],additionalProperties:false};
 const characterSchema={type:"object",properties:{characters:{type:"array",items:{type:"object",properties:{name:{type:"string"},aliases:{type:"array",items:{type:"string"}},initial_identity:{type:"string"},personality:{type:"string"},backstory:{type:"string"}},required:["name","aliases","initial_identity","personality","backstory"],additionalProperties:false}}},required:["characters"],additionalProperties:false};
-const ignoredCharacterKeys=new Set(["name","image_prompt","visual_style","reference_image","reference_image_optional","visual_transformation","performance_rules"]);
+const ignoredCharacterKeys=new Set(["name","speech_style","image_prompt","visual_style","reference_image","reference_image_optional","visual_transformation","performance_rules"]);
 function flattenCharacterMaterial(character){
   const values=[];
   const visit=(value,key="")=>{
@@ -133,6 +133,7 @@ export function rebuildTemporalRelations(projectId,episodeNo=null){
 export async function bootstrapCharacterMemory(project,artifact,signal){
   const content=JSON.parse(artifact.content_json||"{}");
   const characters=Array.isArray(content.characters)?content.characters:[];
+  const speechStyles=new Map(characters.map(character=>[text(character.name),text(character.speech_style)]));
   if(!characters.length)return {characters:0};
   const source=characters.map((character,index)=>`【人物${index+1}：${text(character.name)||`未命名人物${index+1}`}】\n${flattenCharacterMaterial(character)||"无其他文字材料"}`).join("\n\n");
   const prompt=`你是线性剧情记忆库的人物档案编辑。下面每个人物的原始材料已经把03人物卡中除图片与表演提示外的全部文字拼接在一起，原字段标签已被移除。不要猜测某句话原本属于哪个字段，必须根据语义和故事时间重新分类。
@@ -166,10 +167,10 @@ ${JSON.stringify(first.output,null,2)}`;
   transaction(()=>{
     const names=new Set();
     for(const item of extracted){
-      const name=text(item.name),identity=futurePattern.test(text(item.initial_identity))?"":text(item.initial_identity),personality=futurePattern.test(text(item.personality))?"":text(item.personality),backstory=futurePattern.test(text(item.backstory))?"":text(item.backstory);names.add(name);
-      run(`INSERT INTO memory_entities(project_id,kind,canonical_name,aliases_json,initial_identity,personality,backstory,source_type,source_ref,active,updated_at)
-        VALUES(@pid,'character',@name,@aliases,@identity,@personality,@backstory,'characters',@ref,1,@time)
-        ON CONFLICT(project_id,kind,canonical_name) DO UPDATE SET aliases_json=excluded.aliases_json,initial_identity=excluded.initial_identity,personality=excluded.personality,backstory=excluded.backstory,source_ref=excluded.source_ref,active=1,updated_at=excluded.updated_at`,{pid:project.id,name,aliases:JSON.stringify(item.aliases||[]),identity,personality,backstory,ref:String(artifact.version||1),time:now()});
+      const name=text(item.name),identity=futurePattern.test(text(item.initial_identity))?"":text(item.initial_identity),personality=futurePattern.test(text(item.personality))?"":text(item.personality),speechStyle=speechStyles.get(name)||"",backstory=futurePattern.test(text(item.backstory))?"":text(item.backstory);names.add(name);
+      run(`INSERT INTO memory_entities(project_id,kind,canonical_name,aliases_json,initial_identity,personality,speech_style,backstory,source_type,source_ref,active,updated_at)
+        VALUES(@pid,'character',@name,@aliases,@identity,@personality,@speechStyle,@backstory,'characters',@ref,1,@time)
+        ON CONFLICT(project_id,kind,canonical_name) DO UPDATE SET aliases_json=excluded.aliases_json,initial_identity=excluded.initial_identity,personality=excluded.personality,speech_style=excluded.speech_style,backstory=excluded.backstory,source_ref=excluded.source_ref,active=1,updated_at=excluded.updated_at`,{pid:project.id,name,aliases:JSON.stringify(item.aliases||[]),identity,personality,speechStyle,backstory,ref:String(artifact.version||1),time:now()});
     }
     for(const row of all("SELECT id,canonical_name FROM memory_entities WHERE project_id=@pid AND kind='character' AND source_type='characters'",{pid:project.id}))if(!names.has(row.canonical_name))run("UPDATE memory_entities SET active=0,updated_at=@time WHERE id=@id",{time:now(),id:row.id});
   });
@@ -276,13 +277,56 @@ function normalizeEventTimeText(event,scene){
 
 const memoryEventRules=`只提取会影响后续世界状态、人物选择、事件因果或精确连续性的变化：实际行动及结果，重要进出地点，道具出现/获得/使用/转交/损毁，明确说出的新信息及获知者，关系/身份/能力变化，系统积分技能数值变化，邀请/约定/命令/威胁/承诺，旧事件的兑现回应阻断反转，以及集尾钩子。普通问候、重复争吵、无结果问句、气氛、表情、无意义走动和不改变任何条件的台词不提取。一个事件只表达一个主要变化；同一句系统播报若同时改变积分和技能，必须拆为两个事件，共用原文证据。时间、地点、金额、数量作为事件属性保存，不拆成啰嗦的独立事件。原文出现的“内、后、前、次日、翌日、与此同时”等时间关系词必须逐字保留，不得把“三天后”概括成“三天内”，也不得自行换算绝对日期。object_text必须写明动作针对的具体人物、事物或事项；qualifier_text只保存能在同类对象中唯一识别它的最小限定；result_text只写直接可见或明确说出的结果。summary必须是脱离上下文仍能独立理解的“主体+行动+具体对象+结果”，不得使用他、她、对方、该物、东西、事情、那里、这个骗局、真相等无独立指向表达，不得写评价、缘由猜测、气氛、“本集”或剧情概括。source_quote必须逐字截取输入剧本中能证明该事件的最短完整原文。`;
 const temporalEventRules=`时间必须另行分类：timeline_type=main表示当前主时间线，flashback表示已发生的回忆/倒叙，flashforward表示未来预示，parallel表示与主线同时发生的另一地点，无法确认才用unknown；timeline_label用“主时间线/十年前/与此同时”等最短标签；time_text保留“次日、三天后、十年前”等原文时间；temporal_anchor写它相对于哪个明确事件或时间点，不能确定则留空；temporal_relation只写after/before/same_time/unknown。只有在当前主线或明确同步支线上实际发生并能够改变当前世界状态的事件使用snapshot_effect=advance_current；倒叙用historical_only，未来预示用future_only，仅补充说明而不改变状态用no_change。不得把倒叙中的旧持有人、旧关系或旧数值当成当前状态。`;
-function selfContainedIssues(items){const issues=[];for(const [index,item] of items.entries()){const no=index+1,summary=text(item.summary),subject=text(item.subject),object=text(item.object_text),han=(summary.match(/\p{Script=Han}/gu)||[]).length;if(!subject||/^(?:他|她|对方|男人|女人|众人|有人|神秘人)$/.test(subject))issues.push(`${no}：主体没有独立指向`);if(!text(item.action))issues.push(`${no}：缺少明确动作`);if(!object||/^(?:骗局|事情|这件事|东西|邀请|照片|合同|证据|能力|真相|那里|任务)$/.test(object))issues.push(`${no}：对象缺少最小唯一限定`);if(han<8||han>60)issues.push(`${no}：summary应保持简洁自足，当前${han}个汉字`);if(/(?:^|[，。；])(?:他|她|对方)(?:在|向|把|将|已|又|随即|随后)?|(?:该物|此事|这件事|东西|那里|这个骗局|该骗局|真相被揭开)/.test(summary))issues.push(`${no}：summary含依赖上下文的指代`);}return issues;}
+function selfContainedIssues(items){const issues=[];for(const [index,item] of items.entries()){const no=index+1,summary=text(item.summary),subject=text(item.subject),object=text(item.object_text),han=(summary.match(/\p{Script=Han}/gu)||[]).length;if(!subject||/^(?:他|她|对方|男人|女人|众人|有人|神秘人)$/.test(subject))issues.push(`${no}：主体没有独立指向`);if(!text(item.action))issues.push(`${no}：缺少明确动作`);if(!object||/^(?:骗局|事情|这件事|东西|邀请|照片|合同|证据|能力|真相|那里|任务)$/.test(object))issues.push(`${no}：对象缺少最小唯一限定`);if(han<8||han>60)issues.push(`${no}：summary应保持简洁自足，当前${han}个汉字`);const leadingPronoun=summary.match(/^(?:他|她|对方)(?:在|向|把|将|已|又|随即|随后)?/),clausePronoun=summary.match(/[，。；](?:他|她|对方)(?:在|向|把|将|已|又|随即|随后)?/),pronounDepends=Boolean(leadingPronoun||clausePronoun&&!summary.slice(0,clausePronoun.index).includes(subject)),vagueMatch=summary.match(/(?:该物|此事|这件事|东西|那里|这个骗局|该骗局|真相被揭开)/);if(pronounDepends||vagueMatch){const hit=leadingPronoun?.[0]||clausePronoun?.[0]?.replace(/^[，。；]/,"")||vagueMatch?.[0]||"未知";issues.push(`${no}：summary含依赖上下文的指代（命中：${hit}；摘要：“${summary.slice(0,80)}”）`);}}return issues;}
+
+const combatActionPattern=/(?:攻击|袭击|追击|围攻|扑向|冲向|逼近|挥拳|出拳|踢|踹|砸|撞|捅|刺|劈|砍|开枪|射击|射中|击中|击倒|击退|击晕|打倒|打伤|打中|格挡|招架|闪避|躲开|反击|还击|挣脱|制服|压制|夺枪|夺刀|夺械|缴械|扭住|锁住|掐住|擒住|按倒|摔倒|受伤|中弹|流血)/;
+const combatBoundaryTypes=new Set(["revelation","relationship_change","system_change","capability_change","prop_change","location_change"]);
+const eventPeople=event=>new Set([event.subject,...(event.participants||[]),event.object_text].map(text).filter(value=>value&&value.length>=2&&value.length<=12&&!/(?:物资|武器|手枪|枪|刀|伤口|身体|出口|道路|房门|冰箱)/.test(value)));
+const sharesCombatParticipant=(members,event)=>{const known=new Set(members.flatMap(item=>[...eventPeople(item)]));return [...eventPeople(event)].some(name=>known.has(name));};
+const isCombatEvent=event=>!combatBoundaryTypes.has(event.event_type)&&!/^\s*[^△\n：:]{1,20}[：:]/.test(text(event.source_quote))&&combatActionPattern.test([event.action,event.summary,event.result_text].map(text).join(""));
+export function combatLinkView(events){
+  const result=[];
+  for(let index=0;index<events.length;){
+    const first=events[index];
+    if(!isCombatEvent(first)){result.push(first);index++;continue;}
+    const members=[first];let cursor=index+1;
+    while(cursor<events.length){const next=events[cursor],previous=members.at(-1);if(!isCombatEvent(next)||Number(next.order)!==Number(previous.order)+1||Number(next.scene_no)!==Number(first.scene_no)||text(next.timeline_type)!==text(first.timeline_type)||!sharesCombatParticipant(members,next))break;members.push(next);cursor++;}
+    if(members.length<3){result.push(...members);index=cursor;continue;}
+    const representative=members.at(-1),people=[...new Set(members.flatMap(item=>[...eventPeople(item)]))].slice(0,4),opening=text(first.summary),ending=text(representative.summary);
+    result.push({...representative,summary:`【连续动作簇｜事件${members[0].order}–${representative.order}】${people.length?people.join("、")+"连续攻防；":""}${opening}${opening===ending?"":`；最终${ending}`}`,source_quote:`起点：${text(first.source_quote)}｜结果：${text(representative.source_quote)}`,_combat_orders:members.map(item=>Number(item.order))});
+    index=cursor;
+  }
+  return result;
+}
 
 export async function extractEpisodeMemory(project,episode,signal){
   if(!embeddingConfigured())throw new Error("剧情事件提炼需要 Embedding API；请先在模型设置中配置并测试连接");
   let candidates=candidateEvents(project.id,episode.episode_no);
   const scenes=splitScriptScenes(episode.script),units=splitExtractionUnits(scenes),firstPass=[];let extractionMeta={provider:"mock",model:""};
+  const textProvider=activeProvider(),scanHash=hash(JSON.stringify({script:text(episode.script),provider:textProvider.id,baseUrl:textProvider.baseUrl,model:textProvider.model,memoryEventRules,causalBridgeRules}));
+  let checkpointRow=get("SELECT input_hash,completed_json FROM memory_event_scan_checkpoints WHERE project_id=@pid AND episode_no=@episode",{pid:project.id,episode:episode.episode_no}),completedUnits={};
+  if(checkpointRow?.input_hash===scanHash){try{completedUnits=JSON.parse(checkpointRow.completed_json||"{}");}catch{completedUnits={};}}
+  else run(`INSERT INTO memory_event_scan_checkpoints(project_id,episode_no,input_hash,completed_json,updated_at) VALUES(@pid,@episode,@hash,'{}',@time) ON CONFLICT(project_id,episode_no) DO UPDATE SET input_hash=excluded.input_hash,completed_json='{}',updated_at=excluded.updated_at`,{pid:project.id,episode:episode.episode_no,hash:scanHash,time:now()});
+  const retryLimit=2,scanRetry={remaining:retryLimit},postRetry={remaining:retryLimit};
+  const generateWithSharedRetry=async(args,budget,label)=>{
+    for(;;){
+      try{return await generate({...args,extra:{...(args.extra||{}),sharedTransientRetry:true}});}
+      catch(error){
+        if(signal?.aborted||!isTransientTransportError(error)||budget.remaining<=0)throw error;
+        budget.remaining--;
+        run("UPDATE jobs SET message=@message WHERE project_id=@pid AND type IN ('episode_state_extract','episode_script','episode','full_book') AND status='running'",{pid:project.id,message:`${label}连接中断，正在自动重试（本组已使用 ${retryLimit-budget.remaining}/${retryLimit} 次）`});
+      }
+    }
+  };
+  const unitKey=unit=>`${unit.sceneNo}:${unit.chunkNo}:${unit.chunkCount}:${unit.startLine}:${unit.endLine}`;
+  const saveCompletedUnit=(unit,result)=>{
+    completedUnits[unitKey(unit)]={events:result.output?.events||[],provider:result.provider||"",model:result.model||""};
+    run("UPDATE memory_event_scan_checkpoints SET completed_json=@json,updated_at=@time WHERE project_id=@pid AND episode_no=@episode AND input_hash=@hash",{json:JSON.stringify(completedUnits),time:now(),pid:project.id,episode:episode.episode_no,hash:scanHash});
+  };
+  const postGenerate=(args,label)=>generateWithSharedRetry(args,postRetry,label);
   const extractUnit=async unit=>{
+    const saved=completedUnits[unitKey(unit)];
+    if(saved)return {result:{output:{events:saved.events||[]},provider:saved.provider||"checkpoint",model:saved.model||""},unit,restored:true};
     const prompt=`你是线性剧情记忆库的分段事件编辑。唯一事实来源是下面这一段最终剧本。逐行扫描，不得因为事件较小而遗漏高连续性价值变化，也不得把对白复述成多个同义事件。片段之间可能有少量重叠，当前只需完整提炼本片段，后续会统一去重。
 
 ${memoryEventRules}
@@ -295,14 +339,16 @@ ${JSON.stringify(candidates,null,2)}
 
 【EP${String(episode.episode_no).padStart(2,"0")} 第${unit.sceneNo}场·片段${unit.chunkNo}/${unit.chunkCount}｜约原剧本第${unit.startLine}–${unit.endLine}行】
 ${unit.text}`;
-    const result=await generate({stage:"memory_events",project,prompt,schema:baseEventSchema,extra:{episode},signal});
+    const result=await generateWithSharedRetry({stage:"memory_events",project,prompt,schema:baseEventSchema,extra:{episode},signal},scanRetry,"剧情片段扫描");
+    saveCompletedUnit(unit,result);
     return {result,unit};
   };
   for(let batchStart=0;batchStart<units.length;batchStart+=2){
     const batch=units.slice(batchStart,batchStart+2);
     run("UPDATE jobs SET message=@message WHERE project_id=@pid AND type IN ('episode_state_extract','episode_script','episode','full_book') AND status='running'",{pid:project.id,message:`正在并行扫描 EP${String(episode.episode_no).padStart(2,"0")} 剧情片段 ${batchStart+1}–${batchStart+batch.length}/${units.length}`});
-    const results=await Promise.all(batch.map(extractUnit));
-    for(const {result,unit} of results){extractionMeta={provider:result.provider,model:result.model};for(const item of result.output?.events||[])firstPass.push({...item,scene_no:unit.sceneNo});}
+    const settled=await Promise.allSettled(batch.map(extractUnit));
+    for(const entry of settled){if(entry.status!=="fulfilled")continue;const {result,unit}=entry.value;extractionMeta={provider:result.provider,model:result.model};for(const item of result.output?.events||[])firstPass.push({...item,scene_no:unit.sceneNo});}
+    const failed=settled.find(entry=>entry.status==="rejected");if(failed)throw failed.reason;
   }
   const audit=extractionMeta,audited=[];
   let merged=firstPass.filter(item=>text(item.summary)&&text(item.source_quote)&&text(episode.script).includes(text(item.source_quote)));
@@ -312,7 +358,7 @@ ${unit.text}`;
     const wanted=new Set(stillUncovered.flatMap(item=>{const indexes=[];for(let i=Math.max(1,item.lineNo-2);i<=Math.min(lineRows.length,item.lineNo+2);i++)indexes.push(i);return indexes;})),repairText=[...wanted].sort((a,b)=>a-b).map(no=>`${no}：${lineRows[no-1]}`).join("\n"),repairTargets=stillUncovered.map(item=>`第${item.lineNo}行｜${item.reason==="temporal"?`时间补漏｜必须保留：${item.temporalMarkers.join("、")}`:item.reason==="system"?"系统信号补漏":"集尾补漏"}｜${item.line}`).join("\n");
     const previousFailure=repairRound===2?`\n\n【上一轮仍未覆盖】\n${stillUncovered.map(item=>`第${item.lineNo}行${item.temporalMarkers?.length?`（必须保留时间：${item.temporalMarkers.join("、")}）`:""}：${item.line}`).join("\n")}\n上一轮没有正确覆盖这些具体内容。本轮必须为每个仍缺失的系统变化、集尾钩子或明确时间事实返回事件；不得只改写已有事件。`:"";
     const coveragePrompt=`你是剧情记忆库的定点补漏员。【必须补漏的精确目标】才是任务清单，上下文只用来理解目标，不得用上下文中的其他句子代替目标。系统信号和集尾钩子必须返回。对每个“时间补漏”目标，只要该句表达的经过、期限、约定、持续状态或历史信息能影响后续理解，就为它返回事件；将目标中标明的原文时间逐字写入time_text，且source_quote必须直接包含该时间。对明显只是辱骂、夸张或无法确认真实性的时长，可以不建事件。不得重复已有事件；source_quote必须逐字取自剧本正文，不包含前置行号。\n\n${memoryEventRules}\n\n【必须补漏的精确目标】\n${repairTargets}\n\n【已有事件】\n${JSON.stringify(merged.map(item=>({summary:item.summary,source_quote:item.source_quote})),null,2)}\n\n【仅供理解的上下文】\n${repairText}${previousFailure}`;
-    const repaired=await generate({stage:"memory_events",project,prompt:coveragePrompt,schema:baseEventSchema,extra:{episode},signal});
+    const repaired=await postGenerate({stage:"memory_events",project,prompt:coveragePrompt,schema:baseEventSchema,extra:{episode},signal},"剧情补漏");
     merged.push(...(repaired.output?.events||[]).map(item=>({...item,scene_no:0})).filter(item=>text(item.summary)&&text(item.source_quote)&&text(episode.script).includes(text(item.source_quote))));
     stillUncovered=uncoveredTailAndSystemLines(episode.script,merged);
   }
@@ -327,7 +373,7 @@ ${unit.text}`;
     if(issues.length){
       const issueOrders=[...new Set(issues.map(issue=>Number(issue.split("：")[0])).filter(order=>order>=1&&order<=raw.length))],repairSchema=baseEventSchema;
       const repairPrompt=`你是剧情记忆库的定点事件修复员。只返回下列指定order，不得返回其他事件，不得改变order和source_quote。只修正主体、动作、具体对象、限定、直接结果和summary；summary必须脱离上下文仍能理解，禁止他、她、对方、东西、这个骗局、本集等指代。\n\n【具体问题】\n${issues.join("\n")}\n\n【待修事件】\n${JSON.stringify(issueOrders.map(order=>raw[order-1]).map(({_sourceIndex,_lineStart,_lineEnd,...item})=>item),null,2)}\n\n【完整剧本】\n${episode.script}`;
-      const repaired=await generate({stage:"memory_events",project,prompt:repairPrompt,schema:repairSchema,extra:{episode},signal});
+      const repaired=await postGenerate({stage:"memory_events",project,prompt:repairPrompt,schema:repairSchema,extra:{episode},signal},"剧情事件修复");
       for(const item of repaired.output?.events||[]){const order=Number(item.order);if(issueOrders.includes(order)&&text(episode.script).includes(text(item.source_quote)))raw[order-1]={...raw[order-1],...item};}
       issues=selfContainedIssues(raw);if(issues.length)throw new Error(`剧情事件定点修复后仍不合格：${issues.slice(0,4).join("；")}`);
     }
@@ -416,7 +462,7 @@ ${JSON.stringify(raw.map(item=>({order:item.order,summary:item.summary,time_text
 
 【EP${String(episode.episode_no).padStart(2,"0")}最终剧本】
 ${episode.script}`;
-  const dimensionResult=await generate({stage:"memory_dimensions",project,prompt:dimensionPrompt,schema:dimensionSchema,extra:{episode},signal});
+  const dimensionResult=await postGenerate({stage:"memory_dimensions",project,prompt:dimensionPrompt,schema:dimensionSchema,extra:{episode},signal},"剧情维度提炼");
   const genericName=genericCharacterIdentifier;
   const dimension={relationships:(dimensionResult.output?.relationships||[]).filter(item=>text(item.person_a)&&text(item.person_b)&&text(item.summary)&&text(item.person_a)!==text(item.person_b)&&text(episode.script).includes(text(item.source_quote))),secondaryCharacters:(dimensionResult.output?.secondary_characters||[]).filter(item=>text(item.name)&&!genericName.test(text(item.name))&&!initialNames.has(text(item.name))&&text(episode.script).includes(text(item.source_quote))),goldenFingers:(dimensionResult.output?.golden_fingers||[]).filter(item=>text(item.name)&&text(item.owner)&&text(episode.script).includes(text(item.source_quote))),goldenAbilities:(dimensionResult.output?.golden_abilities||[]).filter(item=>text(item.golden_name)&&text(item.ability_name)&&text(item.owner)&&text(item.description)&&text(episode.script).includes(text(item.source_quote))),importantProps:(dimensionResult.output?.important_props||[]).filter(item=>text(item.name)&&text(item.significance)&&text(episode.script).includes(text(item.source_quote))),resources:(dimensionResult.output?.resources||[]).filter(item=>text(item.owner)&&text(item.name)&&text(episode.script).includes(text(item.source_quote)))};
   const knownSceneNames=[...new Set([...initialNames,...stableCharacterIdentifiers])].filter(Boolean);
@@ -437,7 +483,7 @@ ${episode.script}`;
     run("UPDATE jobs SET message=@message WHERE project_id=@pid AND type IN ('episode_state_extract','episode_script','episode','full_book') AND status='running'",{pid:project.id,message:"检测到 EP"+String(episode.episode_no).padStart(2,"0")+" 存在金手指事件，正在执行专项补漏"});
     const relatedGoldenEvents=raw.filter(item=>item.event_type==="system_change"||/(?:系统|弹幕|血统|异能|技能)/.test([item.subject,item.action,item.object_text,item.summary].join(""))).map(item=>({order:item.order,summary:item.summary,snapshot_effect:item.snapshot_effect,source_quote:item.source_quote}));
     const goldenPrompt=["你是长篇短剧金手指档案补漏员。综合分类上一轮漏掉了金手指，但事件表已经明确识别到系统、特殊能力或觉醒事件。只依据最终剧本与事件表重新提炼golden_fingers，不输出其他类别。","金手指包括主角持有的系统、弹幕、技能、血统、异能、神器、空间、重生记忆、功法、天赋或契约。普通职业技能和普通道具不算。系统已绑定、激活、生成任务、给出专属鉴定结果或提示使用能力，都说明相应金手指已经出现，不得返回空数组。","fixed_rules只累积不会随升级或剧情变化的激活条件、触发条件、使用对象、消耗、冷却、次数、禁用条件和副作用；可靠度、准确率、成功率、当前精度、等级、积分等可变参数必须写入current_state。current_state写本集结束时已确认的完整快照。首次出现或状态变化必须给出change_type与change_summary。source_quote使用剧本中逐字存在的最短完整证据。","【提炼前金手指快照】",JSON.stringify(priorGolden,null,2),"【已识别的相关事件】",JSON.stringify(relatedGoldenEvents,null,2),"【最终剧本】",episode.script].join("\n\n");
-    const goldenRepair=await generate({stage:"memory_dimensions",project,prompt:goldenPrompt,schema:goldenOnlySchema,extra:{episode},signal});
+    const goldenRepair=await postGenerate({stage:"memory_dimensions",project,prompt:goldenPrompt,schema:goldenOnlySchema,extra:{episode},signal},"金手指补漏");
     dimension.goldenFingers=(goldenRepair.output?.golden_fingers||[]).filter(item=>text(item.name)&&text(item.owner)&&text(episode.script).includes(text(item.source_quote)));
   }
   dimension.goldenFingers=attachProvenGoldenAbilities(dimension.goldenFingers,raw);
@@ -452,7 +498,7 @@ ${episode.script}`;
   const dimensionTexts=[...dimension.relationships.map(item=>item.summary),...dimension.secondaryCharacters.map(item=>`${item.name}：${item.identity}；${item.traits}`),...dimension.goldenFingers.filter(item=>item.change_type!=="无状态变化"&&text(item.change_summary)).map(item=>item.change_summary),...dimension.goldenAbilities.filter(item=>item.change_type!=="无状态变化"&&text(item.change_summary)).map(item=>item.change_summary),...dimension.importantProps.filter(item=>item.change_type!=="无状态变化"&&text(item.change_summary)).map(item=>item.change_summary),...dimension.resources.filter(item=>item.change_type!=="无状态变化"&&text(item.change_summary)).map(item=>item.change_summary)],dimensionVectors=dimensionTexts.length?await embedTexts(dimensionTexts,{signal}):[];let dimensionVectorIndex=0;
   let semanticLinks=[],linkWarning="";
   if(raw.length>1||candidates.length){
-    const localOnly=!candidates.length;
+    const localOnly=!candidates.length,linkEvents=combatLinkView(raw);
     run("UPDATE jobs SET message=@message WHERE project_id=@pid AND type IN ('episode_state_extract','episode_script','episode','full_book') AND status='running'",{pid:project.id,message:`正在判定 EP${String(episode.episode_no).padStart(2,"0")} 的明确剧情关系`});
     const linkPrompt=`你是剧情因果图编辑。根据当前集事件和历史候选，只返回有明确剧情语义的有向边。
 
@@ -479,8 +525,9 @@ ${episode.script}`;
 9. 系统或能力的“激活→生成任务→提示使用→执行能力→得到鉴定/战斗等结果”，以及“具体危险逼近→系统或人物发出警告”，属于明确可连接的回应、导致、利用或升级关系，不是单纯相邻。当前事件中存在这些明确关系时不得返回空数组。
 10. 已提炼的碰撞、袭击、受伤、触碰、打开或使用等因果桥动作，若直接引出后续系统激活、能力触发、道具变化或危机结果，必须用“导致”、“利用”或“升级”连入同一剧情链；不得只连后续系统播报而丢掉已有的直接前因。
 
-【当前集事件】
-${JSON.stringify(raw.map(item=>({order:item.order,summary:item.summary,source_quote:item.source_quote})),null,2)}
+【当前集建链视图】
+连续动作簇只是同场打斗事件的临时压缩表示，order取簇内最后一项；据此返回的关系仍落在该真实事件上。普通事件保持原样。
+${JSON.stringify(linkEvents.map(item=>({order:item.order,summary:item.summary,source_quote:item.source_quote})),null,2)}
 
 【历史候选】
 ${JSON.stringify(candidates.map(item=>({id:item.id,episode_no:item.episode_no,event_order:item.event_order,summary:item.summary})),null,2)}`;
@@ -490,13 +537,13 @@ ${JSON.stringify(candidates.map(item=>({id:item.id,episode_no:item.episode_no,ev
       const valid=semanticRelations.has(link.relation)&&to>=1&&to<=raw.length&&((link.from_type==="current"&&from>=1&&from<to)||(link.from_type==="history"&&candidateIds.has(candidate)));
       if(!valid)return false;const key=`${link.from_type}|${from||candidate}|${to}|${link.relation}`;if(seenLinks.has(key))return false;seenLinks.add(key);return true;
     });
-    try{const linked=await generate({stage:"memory_links",project,prompt:linkPrompt,schema:localOnly?localLinkSchema:linkSchema,extra:{episode},signal});semanticLinks=validLinks(linked.output?.links||[]);}
+    try{const linked=await postGenerate({stage:"memory_links",project,prompt:linkPrompt,schema:localOnly?localLinkSchema:linkSchema,extra:{episode},signal},"剧情关系建链");semanticLinks=validLinks(linked.output?.links||[]);}
     catch(error){if(signal?.aborted)throw error;throw new Error(`剧情关系建链失败：${error.message||String(error)}；本集新记忆尚未入库，原记忆已完整保留`);}
     const hasObviousLocalChain=raw.some(item=>item.event_type==="system_change"||item.event_type==="capability_change")&&raw.length>=3;
     if(!semanticLinks.length&&hasObviousLocalChain){
       run("UPDATE jobs SET message=@message WHERE project_id=@pid AND type IN ('episode_state_extract','episode_script','episode','full_book') AND status='running'",{pid:project.id,message:`EP${String(episode.episode_no).padStart(2,"0")} 建链结果为空，正在定向重试一次`});
-      const retryPrompt=`你是剧情因果图的定点建链员。只根据下面已经提炼完成的本集事件，返回存在明确因果语义的本集有向边。from_order必须小于to_order；relation只能是回应、兑现、导致、反转、阻断、利用、揭示、升级、促使。不得连接纯粹相邻事件；系统或能力的激活、任务、使用、结果及危险警告若构成明确关系，应当连接。没有可靠关系可以返回空links。\n\n【本集事件】\n${JSON.stringify(raw.map(item=>({order:item.order,summary:item.summary,source_quote:item.source_quote})),null,2)}`;
-      try{const retried=await generate({stage:"memory_links",project,prompt:retryPrompt,schema:localLinkSchema,extra:{episode},signal});semanticLinks=validLinks(retried.output?.links||[],true);if(!semanticLinks.length)linkWarning="建链结果为空，事件与向量已照常保存";}
+      const retryPrompt=`你是剧情因果图的定点建链员。只根据下面已经提炼完成的本集建链视图，返回存在明确因果语义的本集有向边。连续动作簇的order取簇内最后一项，仍代表真实事件。from_order必须小于to_order；relation只能是回应、兑现、导致、反转、阻断、利用、揭示、升级、促使。不得连接纯粹相邻事件；系统或能力的激活、任务、使用、结果及危险警告若构成明确关系，应当连接。没有可靠关系可以返回空links。\n\n【本集建链视图】\n${JSON.stringify(linkEvents.map(item=>({order:item.order,summary:item.summary,source_quote:item.source_quote})),null,2)}`;
+      try{const retried=await postGenerate({stage:"memory_links",project,prompt:retryPrompt,schema:localLinkSchema,extra:{episode},signal},"剧情关系定向建链");semanticLinks=validLinks(retried.output?.links||[],true);if(!semanticLinks.length)linkWarning="建链结果为空，事件与向量已照常保存";}
       catch(error){if(signal?.aborted)throw error;throw new Error(`剧情关系定向建链失败：${error.message||String(error)}；本集新记忆尚未入库，原记忆已完整保留`);}
     }
   }
@@ -542,6 +589,7 @@ ${JSON.stringify(candidates.map(item=>({id:item.id,episode_no:item.episode_no,ev
     run(`INSERT INTO memory_extractions(project_id,episode_no,scene_count,paragraph_count,first_pass_count,audit_added_count,final_count,status,updated_at)
       VALUES(@pid,@episode,@scenes,@paragraphs,@first,@audit,@final,'completed',@time)
       ON CONFLICT(project_id,episode_no) DO UPDATE SET scene_count=excluded.scene_count,paragraph_count=excluded.paragraph_count,first_pass_count=excluded.first_pass_count,audit_added_count=excluded.audit_added_count,final_count=excluded.final_count,status='completed',updated_at=excluded.updated_at`,{pid:project.id,episode:episode.episode_no,scenes:scenes.length,paragraphs:text(episode.script).split(/\r?\n/).filter(line=>line.trim()).length,first:firstPass.length,audit:audited.length,final:inserted.length,time:now()});
+    run("DELETE FROM memory_event_scan_checkpoints WHERE project_id=@pid AND episode_no=@episode",{pid:project.id,episode:episode.episode_no});
   });
   return {episode:episode.episode_no,events:raw.length,links:semanticLinks.length,linkWarning,scenes:scenes.length,firstPass:firstPass.length,auditAdded:audited.length,provider:audit.provider,model:audit.model};
 }
@@ -589,7 +637,7 @@ function screenplayTimePoints(rows){
 
 export async function compileMemoryContext(projectId,episode,signal){
   const query=[episode.summary,episode.required_plot,episode.must_not_reveal].join(" "),keys=keywords(query);
-  const entities=all("SELECT kind,canonical_name,aliases_json,initial_identity,personality,backstory FROM memory_entities WHERE project_id=@pid AND active=1",{pid:projectId});
+  const entities=all("SELECT kind,canonical_name,aliases_json,initial_identity,personality,speech_style,backstory FROM memory_entities WHERE project_id=@pid AND active=1",{pid:projectId});
   const relevantEntities=entities.filter((row,index)=>index<2||[row.canonical_name,...JSON.parse(row.aliases_json||"[]")].some(name=>name&&query.includes(name)));
   const continuityNames=[...new Set(relevantEntities.map(item=>item.canonical_name).filter(Boolean))].slice(0,8),nameText=continuityNames.join("、")||"本集主要人物";
   const retrievalQueries=[
@@ -637,7 +685,7 @@ export async function compileMemoryContext(projectId,episode,signal){
   const goldenAbilities=all("SELECT * FROM memory_golden_abilities WHERE project_id=@pid AND active=1 ORDER BY golden_name,canonical_name",{pid:projectId});
   const propNames=new Set(propChanges.map(item=>item.prop_name)),importantProps=all("SELECT * FROM memory_important_props WHERE project_id=@pid AND active=1 ORDER BY latest_episode DESC",{pid:projectId}).filter(item=>propNames.has(item.canonical_name)||query.includes(item.canonical_name));
   const resourceKeys=new Set(resourceChanges.map(item=>`${item.owner}||${item.resource_name}`)),resources=all("SELECT * FROM memory_resources WHERE project_id=@pid AND active=1 ORDER BY latest_episode DESC",{pid:projectId}).filter(item=>resourceKeys.has(`${item.owner}||${item.canonical_name}`)||query.includes(item.canonical_name)||query.includes(item.owner));
-  const profiles=relevantEntities.map(row=>`${row.canonical_name}｜初始身份：${row.initial_identity||"无"}｜性格：${row.personality||"无"}｜前史：${row.backstory||"无"}`).join("\n");
+  const profiles=relevantEntities.map(row=>`${row.canonical_name}｜初始身份：${row.initial_identity||"无"}｜性格：${row.personality||"无"}${row.speech_style?`｜语言特征：${row.speech_style}`:""}｜前史：${row.backstory||"无"}`).join("\n");
   const timeLabel=row=>row.timeline_type==="flashback"?"过去回忆":row.timeline_type==="flashforward"?"未来预示":row.timeline_type==="parallel"?"同期支线":row.timeline_type==="unknown"?"时间待定":"当前主线";
   const formatEvent=row=>`EP${String(row.episode_no).padStart(2,"0")}-${row.event_order}：${row.summary}${row.location?`｜地点：${row.location}`:""}${eventDisplayTime(row)?`｜原文时间：${eventDisplayTime(row)}`:""}｜${timeLabel(row)}${row.temporal_anchor?`｜相对锚点：${row.temporal_anchor}`:""}${row.temporal_relation&&row.temporal_relation!=="unknown"?`｜关系：${row.temporal_relation}`:""}`;
   const events=`【最近线性事件｜固定承接】\n${previous.map(formatEvent).join("\n")||"无"}\n\n【较早相关事件｜语义召回】\n${recalled.sort((a,b)=>a.episode_no-b.episode_no||a.event_order-b.event_order).map(formatEvent).join("\n")||"无"}`;

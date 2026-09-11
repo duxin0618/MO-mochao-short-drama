@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS projects (
   total_episodes INTEGER NOT NULL DEFAULT 60,
   audience TEXT DEFAULT '', platform TEXT DEFAULT '', restrictions TEXT DEFAULT '',
   seed TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'idea',
-  current_stage TEXT NOT NULL DEFAULT 'idea', template_id TEXT NOT NULL DEFAULT 'default', idea_libraries_json TEXT NOT NULL DEFAULT '[]', story_mode TEXT NOT NULL DEFAULT 'normal', narrative_length TEXT NOT NULL DEFAULT 'long',
+  current_stage TEXT NOT NULL DEFAULT 'idea', template_id TEXT NOT NULL DEFAULT 'newcomer-recommended', idea_libraries_json TEXT NOT NULL DEFAULT '[]', idea_mode TEXT NOT NULL DEFAULT 'daily', story_mode TEXT NOT NULL DEFAULT 'normal', narrative_length TEXT NOT NULL DEFAULT 'long',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS memory_entities (
   id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL,
   kind TEXT NOT NULL DEFAULT 'character', canonical_name TEXT NOT NULL,
   aliases_json TEXT NOT NULL DEFAULT '[]', initial_identity TEXT DEFAULT '',
-  personality TEXT DEFAULT '', backstory TEXT DEFAULT '', source_type TEXT NOT NULL DEFAULT 'characters',
+  personality TEXT DEFAULT '', speech_style TEXT DEFAULT '', backstory TEXT DEFAULT '', source_type TEXT NOT NULL DEFAULT 'characters',
   source_ref TEXT DEFAULT '', active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
@@ -220,6 +220,13 @@ CREATE TABLE IF NOT EXISTS memory_extractions (
   FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
   UNIQUE(project_id,episode_no)
 );
+CREATE TABLE IF NOT EXISTS memory_event_scan_checkpoints (
+  project_id INTEGER NOT NULL, episode_no INTEGER NOT NULL,
+  input_hash TEXT NOT NULL, completed_json TEXT NOT NULL DEFAULT '{}',
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(project_id,episode_no),
+  FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS memory_temporal_relations (
   id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, event_id INTEGER NOT NULL,
   episode_no INTEGER NOT NULL, marker_order INTEGER NOT NULL DEFAULT 0, marker_text TEXT NOT NULL,
@@ -310,13 +317,15 @@ CREATE INDEX IF NOT EXISTS idx_job_step_logs_job ON job_step_logs(job_id,id);
 `);
 
 try { db.exec("ALTER TABLE sources ADD COLUMN library TEXT NOT NULL DEFAULT 'reality'"); } catch {}
-try { db.exec("ALTER TABLE projects ADD COLUMN template_id TEXT NOT NULL DEFAULT 'default'"); } catch {}
+try { db.exec("ALTER TABLE projects ADD COLUMN template_id TEXT NOT NULL DEFAULT 'newcomer-recommended'"); } catch {}
 try { db.exec("ALTER TABLE episodes ADD COLUMN hook TEXT DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE projects ADD COLUMN emotion_intensity TEXT NOT NULL DEFAULT 'strong'"); } catch {}
 try { db.exec("ALTER TABLE projects ADD COLUMN narrative_person TEXT NOT NULL DEFAULT 'first'"); } catch {}
 try { db.exec("ALTER TABLE projects ADD COLUMN sort_order INTEGER"); } catch {}
 try { db.exec("ALTER TABLE projects ADD COLUMN deleted_at TEXT"); } catch {}
 try { db.exec("ALTER TABLE projects ADD COLUMN idea_libraries_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
+try { db.exec("ALTER TABLE projects ADD COLUMN idea_mode TEXT NOT NULL DEFAULT 'daily'"); } catch {}
+db.exec("UPDATE projects SET idea_mode='daily' WHERE idea_mode IS NULL OR idea_mode NOT IN ('daily','brainstorm','sinking')");
 try { db.exec("ALTER TABLE projects ADD COLUMN story_mode TEXT NOT NULL DEFAULT 'normal'"); } catch {}
 try { db.exec("ALTER TABLE projects ADD COLUMN narrative_length TEXT NOT NULL DEFAULT 'long'"); } catch {}
 try { db.exec("ALTER TABLE knowledge_items ADD COLUMN item_type TEXT NOT NULL DEFAULT 'source'"); } catch {}
@@ -374,6 +383,7 @@ try { db.exec("ALTER TABLE memory_important_props ADD COLUMN origin_text TEXT NO
 try { db.exec("ALTER TABLE memory_prop_changes ADD COLUMN origin_text TEXT NOT NULL DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE memory_secondary_characters ADD COLUMN temporal_scope TEXT NOT NULL DEFAULT 'advance_current'"); } catch {}
 try { db.exec("ALTER TABLE memory_links ADD COLUMN thread_hint TEXT DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE memory_entities ADD COLUMN speech_style TEXT DEFAULT ''"); } catch {}
 // 旧版会把所有相邻事件默认串成“继续”。这些边只表示顺序，不是可靠的剧情关系。
 db.exec("DELETE FROM memory_links WHERE relation='\u7ee7\u7eed'");
 db.exec("UPDATE artifacts SET type='benchmark',title='对标和改编' WHERE type='story_design'; UPDATE projects SET current_stage='benchmark' WHERE current_stage='story_design';");

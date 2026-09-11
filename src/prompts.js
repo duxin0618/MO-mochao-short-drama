@@ -42,13 +42,13 @@ const seedForStage=(stage,project)=>{
   if(stage!=="outline")return seed;
   return (seed.match(/[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]/g)||[]).length<200?seed:"";
 };
-const writingCharacters=artifacts=>(artifacts.find(x=>x.type==="characters")?.content?.characters||[]).map(({role,name,age,personality})=>({role:role||"",name:name||"",age:age||"",personality:personality||""}));
+const writingCharacters=artifacts=>(artifacts.find(x=>x.type==="characters")?.content?.characters||[]).map(({role,name,age,personality,speech_style})=>({role:role||"",name:name||"",age:age||"",personality:personality||"",speech_style:speech_style||""}));
 const novelContextText=value=>String(value??"").replace(/[“"]([^”"\n]+)[”"]/g,"「$1」").replace(/[（）()]/g,"").trim();
 const numberedRequiredPlot=value=>{
   const items=novelContextText(value).split(/→|[；;\n]+/).map(item=>item.trim()).filter(Boolean);
   return items.length?items.map((item,index)=>`节点${index+1}：${item}`).join("\n"):"无";
 };
-const novelCharacterText=characters=>characters.map((c,index)=>`${index+1}. ${novelContextText(c.name)||"未命名人物"}｜${novelContextText(c.role)||"角色"}｜${novelContextText(c.age)}｜性格：${novelContextText(c.personality)}`).join("\n")||"无额外人设";
+const novelCharacterText=characters=>characters.map((c,index)=>`${index+1}. ${novelContextText(c.name)||"未命名人物"}｜${novelContextText(c.role)||"角色"}｜${novelContextText(c.age)}｜性格：${novelContextText(c.personality)}${novelContextText(c.speech_style)?`｜语言特征：${novelContextText(c.speech_style)}`:""}`).join("\n")||"无额外人设";
 const storyStateUsageGroups = [
   {tag:"NOW",title:"当前仍需处理",categories:new Set(["unresolved","goal"]),rule:"仅表示本集开场仍存在的压力或未完成事项；只有与本集必须发生直接相关时才影响人物行动，不得照抄状态原句。"},
   {tag:"CONTINUE",title:"持续条件",categories:new Set(["relationship","prop","capability"]),rule:"仅用于保持关系、关键道具归属和既有能力连续；不是本集必须展示的事件，不得重新讲述获得过程。"},
@@ -83,13 +83,14 @@ function context(stage, project, constraints, artifacts, evidence = [], range = 
     : artifacts.filter(artifact => stageOrder.indexOf(artifact.type) < stageIndex);
   const compact = artifact => {
     if(artifact.type==="control_settings")return {type:"control_settings",content:{card_points:artifact.content?.card_points||"未指定"}};
+    if(artifact.type==="planning"){const {novel_style,...planning}=artifact.content||{};return {type:"planning",content:planning};}
     if(artifact.type==="idea"&&!["episode","quality","state_update"].includes(stage)){
       const {source_digest,...visibleIdea}=artifact.content||{};
       return {type:"idea",content:visibleIdea};
     }
     if(!["episode","quality","state_update"].includes(stage))return {type:artifact.type,content:artifact.content};
     if(artifact.type==="idea")return {type:"idea",content:{core_hook:artifact.content?.core_hook,protagonist_goal:artifact.content?.protagonist_goal,approved_idea:artifact.content?.approved_idea}};
-    if(artifact.type==="characters")return {type:"characters",content:{characters:(artifact.content?.characters||[]).map(c=>({role:c.role,name:c.name,age:c.age,personality:c.personality,biography:c.biography}))}};
+    if(artifact.type==="characters")return {type:"characters",content:{characters:(artifact.content?.characters||[]).map(c=>({role:c.role,name:c.name,age:c.age,personality:c.personality,...(String(c.speech_style||"").trim()?{speech_style:c.speech_style}:{}),biography:c.biography}))}};
     return {type:artifact.type,content:artifact.content};
   };
   const effectiveHardConstraints=stage==="state_update"?[]:constraintsInRange(constraints,range);
@@ -102,6 +103,22 @@ function context(stage, project, constraints, artifacts, evidence = [], range = 
 }
 
 export function buildStagePrompt(stage, project, constraints, artifacts, evidence = [], range = null) {
+  const ideaModeRule=stage!=="idea"?"":project.idea_mode==="brainstorm"?`
+
+【灵感方向｜脑洞】
+本轮不是给常见题材换皮，而要建立一个一眼可辨的新鲜故事发动机。先为主角选择与故事矛盾真正相关的冷门、小众身份；该身份必须带来独有的知识、规矩、工具、禁忌或解决问题方式，不能只是职业标签。再构造一组跨身份、规则体系、文化、时代、行业或世界观的强反差，让双方规则在同一目标上持续碰撞。冷门身份与反差必须共同制造核心钩子、行动优势、代价和可持续冲突，不能只服务于标题或第一集。避开资料库和常见网文中最顺手的第一联想组合；资料库只用于发现真实规则与规避同质化，不得照搬。不得声称绝对首创，但成品必须具有明显的新组合感。
+differentiation字段必须采用“反差组合：A × B；反差如何持续产生剧情：……”的明确格式，直接展示这组反差及其可持续冲突机制，不能只写抽象的差异化评价。core_hook必须实际发动这组反差，approved_idea必须将其融入最终方案，不能让反差只停留在differentiation字段或标题噱头中。` : project.idea_mode==="sinking"?`
+
+【灵感方向｜下沉】
+先在内部锻造一句具体、离谱、立刻能看懂关系与伤害的“爆点母句”，再由它长出整部故事。爆点必须同时包含：明确的亲密或利益关系；施害者明知对方软肋或后果仍越界；一个主动、极端且可执行的行为；与严重代价极不相称的自私目的；当场可见的现实后果。不要只写出轨、偏爱、背叛、虐待等抽象概念，也不要只靠骂人制造强度。人物要能用荒谬却自洽的歪理把牺牲包装成爱、懂事、偿还、成全或理所当然。将爆点母句凝练进 core_hook，并在其余既有字段中展开可持续升级的关系、软肋、冲突与故事承诺；必须依据当前 Seed 重新组合，不照抄资料或固定桥段。` : `
+
+`;
+  const ideaInheritanceRule=stage==="planning"?`
+
+【01创意承接规则】
+02不是另起炉灶，也不是机械缩写01，而是把已批准01中的有效创意压缩、重组并定案为可执行的全剧基础。生成前在内部逐项核对01的core_hook、protagonist_goal、sustained_conflict、relationship_engine、story_promise、differentiation与approved_idea，禁止遗漏、弱化或替换其中决定故事独特性的内容；不要输出核对过程，也不要增加规定以外的字段。
+title应抓住最有辨识度的核心钩子、主角身份或关键反差；framework承接主角目标、持续冲突及故事走向；worldbuilding落实核心机制、必要规则以及发生碰撞的两套逻辑；synopsis完整承接批准创意、关系引擎、冲突升级和结局方向；core_expectations提炼故事持续兑现给观众的核心回报。diagnosis与market_fit属于分析依据，不要原样抄写，应转化为上述字段中的具体创作选择。
+如果01的differentiation明确包含“反差组合”，这组反差必须进入framework、worldbuilding或synopsis中最合适的位置，并在全剧机制中持续生效，不能在02被压掉、改成泛化卖点或只剩标题噱头。允许删去重复表述与分析话术，但不得删去支撑人物行动、世界规则、关系冲突、长期升级和故事承诺的有效信息。` : "";
   const tasks = {
     idea: `诊断创意缺口，结合证据但不要照搬作品或热点，提出并整合一个可支撑全剧的创意。字段：diagnosis、market_fit、differentiation、core_hook、protagonist_goal、sustained_conflict、relationship_engine、story_promise、approved_idea。`,
     planning: `仿照当前专业模板的信息密度，生成可直接定案的极简策划，不要写成分析报告。只输出五个字段：1.title：一个有网感、有记忆点、适合短视频平台传播的中文短剧标题，通常 6–16 个汉字；优先抓住主角身份反差、核心机制、极端处境或强爽点，可使用口语化悬念、身份反转或利益承诺，但必须准确对应本剧。禁止空泛的“逆袭人生”、无关热词、标点堆砌、多个备选和照搬现有作品名。2.framework：单行，约 6–8 个节点，用“→”连接，不超过 160 字。3.worldbuilding：必须是字符串，只写 3–5 行，每行为“短标签：一至两句设定”，总计不超过 350 字。4.synopsis：只写 2 个短段落，第一段写开局与主要发展，第二段写反转与结局方向，总计 180–300 字。5.core_expectations：只写一句话，高度概括全剧反复兑现的核心期待。句式为“主角依靠【核心手段/机制】，自身获得【成长】，逐步完成【核心目标】。”约 25–50 字。不用箭头，不列清单，不展开升级细节，不写阴谋、反转、结局、主题或观众分析。禁止输出对标分析、市场评价、创作理由、抽象方法论、字段说明或重复概括。`,
@@ -140,8 +157,9 @@ export function buildStagePrompt(stage, project, constraints, artifacts, evidenc
   };
   const engine = ["outline", "episode", "quality"].includes(stage) ? `\n\n${shortDramaEngine}${["episode","quality"].includes(stage)?`\n\n${episodePlanExecutionEngine}`:""}` : "";
   const characterBrief=stage==="characters"?String(artifacts.find(item=>item.type==="character_brief")?.content?.text||"").trim():"";
+  const speechStyleDirective=stage==="characters"?`\n\n【语言特征（可选）】\ncharacters 每人可额外包含 speech_style。仅当人物经历和设定确实形成稳定的语言辨识度时填写，可写方言、口音、中英混杂、称呼习惯、低频口头禅或特殊句式；否则返回空字符串。不得为所有人物强行添加，也不得设计成每句话重复的标签。`:"";
   const characterDirective=characterBrief?`\n\n【本次必须优先落实的人物补充要求】\n${characterBrief}\n\n生成前在内部逐项拆解其中的新增人数、总人数、性别、角色定位、身份、关系及对旧人物的修改要求；先逐项落实，再补充主线所需人物。不要输出核对过程。若要求“新增/再加/少了N个”，必须在已有不同姓名的人物之外另建N张独立人物卡；不得用改名、改角色标签、群体称谓或已有角色充数。此段是本次人设生成的直接指令，优先于模型自行判断的人物数量与配置。`:"";
-  return `${shared}${engine}\n\n当前任务：${tasks[stage]}\n\n项目上下文：\n${context(stage, project, constraints, artifacts, evidence, range)}${characterDirective}`;
+  return `${shared}${engine}${ideaModeRule}${ideaInheritanceRule}\n\n当前任务：${tasks[stage]}\n\n项目上下文：\n${context(stage, project, constraints, artifacts, evidence, range)}${characterDirective}${speechStyleDirective}`;
 }
 
 export function buildOutlineSpinePrompt(project,constraints,artifacts){
@@ -251,7 +269,8 @@ export function buildPlanningSectionPrompt(section, project, constraints, artifa
     framework: `只重写 framework。必须是单行字符串，用“→”连接 6–8 个节点，不超过 160 字。保留现有世界观、故事梗概和核心期待已确定的事实，只优化全剧走向链。`,
     worldbuilding: `只重写 worldbuilding。必须是字符串，只写 3–5 行，每行“短标签：一至两句设定”，总计不超过 350 字。不改变现有框架、故事主线和核心期待，不新增会改写主线的重大设定。`,
     synopsis: `只重写 synopsis。必须是字符串，只写两个短段落，总计 180–300 字。第一段写开局与主要发展，第二段写反转与结局方向。严格遵循现有框架、世界观和核心期待，不另造一个故事。`,
-    core_expectations: `只重写 core_expectations。必须是一句约 25–50 字的字符串，句式为“主角依靠【核心手段/机制】，自身获得【成长】，逐步完成【核心目标】。”不用箭头，不列清单，不展开升级细节，不写阴谋、反转、结局、主题或观众分析。`
+    core_expectations: `只重写 core_expectations。必须是一句约 25–50 字的字符串，句式为“主角依靠【核心手段/机制】，自身获得【成长】，逐步完成【核心目标】。”不用箭头，不列清单，不展开升级细节，不写阴谋、反转、结局、主题或观众分析。`,
+    novel_style: `只生成 novel_style。根据当前02的标题、框架、世界观、故事梗概和核心期待，确定一种能直接指导小说正文遣词和叙述方式的文学文体或笔法。使用成熟、通行、含义明确的文学表达，回答“正文应当怎么写”，不是给作品起名。禁止自造四字意象、书名式标签、题材口号、色彩光影、镜头和画面氛围。只返回2–10个汉字，不解释，不写成句子，不规定人物对白。`
   };
   if (!rules[section]) throw new Error("未知的策划字段");
   return `${shared}\n\n任务：${rules[section]}\n只输出包含 ${section} 的 JSON 对象，不输出其他字段。\n\n项目基础：\n${JSON.stringify({title:project.title,seed:project.seed,totalEpisodes:project.total_episodes,tags:project.tags},null,2)}\n\n已确认创意：\n${JSON.stringify(idea,null,2)}\n\n当前故事策划（除目标字段外均为不可改动的上下文）：\n${JSON.stringify(planning,null,2)}\n\n硬约束：\n${JSON.stringify(constraints.filter(x=>x.kind==="hard"),null,2)}`;
@@ -391,6 +410,7 @@ export function buildEpisodeNovelPrompt(project, constraints, artifacts, episode
   const protagonist=String(protagonistCard.name||"").trim()||"主角";
   const protagonistIdentity=String(protagonistCard.role||"").trim()||"身份未明确";
   const planning=artifacts.find(item=>item.type==="planning")?.content||{};
+  const novelStyle=String(planning.novel_style||"").trim();
   const narrativePerson=project.narrative_person==="third"?"third":"first";
   const narrativePersonRule=narrativePerson==="third"
     ? `锁定第三人称限知视角。除叙述称谓外，完整继承第一人称限知的写法、情绪深度和主观贴近程度。将第一人称中的“我”对应改为主角固定姓名以及与其性别一致的“他”或“她”，但仍然紧贴主角当下的所见、所闻、感受、疼痛、欲望、判断、怀疑、回忆和选择，可以直接描写主角的内心想法，也可以使用带有主角语气的自由间接引语。不得因为使用第三人称而退化为客观旁观、镜头说明、动作流水账或剧情概述。
@@ -418,12 +438,13 @@ ${hardConstraintText(constraints,{start:Number(episode?.episode_no),end:Number(e
 ${narrativePersonRule}
 全文的视角、内心、核心选择与第一人称“我”均只能归属于上述锁定主角，不得因其他人物戏份较多而更换主角。
 从第一段到最后一段保持同一人称。此规则高于模板格式、样例、扩写要求和定向修订要求；任何材料若暗示另一种人称，只学习其剧情信息，不得跟随其人称。
+${novelStyle?`\n【小说文风｜仅限非对白】${novelStyle}\n仅影响小说的非对白叙述，不得改变人物对白、剧情事实和事件顺序。\n`:""}
 
-【短段表达规则｜不得削减剧情】
-40个汉字只限制单个自然段的表达长度，不限制一集的事件数量、对白回合、冲突层次、人物感受和情绪强度。戏剧完整度高于文字精简：先把每个节点的行动、回应、升级、后果和选择设计完整，再用多个自然、各自成立的短段写出来；不得为了少写字而删掉有效事件、对手手段、现实损失、关键反应、对白攻防、反扑或选择。小说的丰富度来自更多有效动作、对白回合、选择、反应和局面变化，不来自拉长同一个动作、观察过程或环境描写。一个自然段只表达一个完整的信息或节拍，不把同一句话、同一个动作或同一条信息机械截断。
+【自然段表达规则｜不得削减剧情】
+100个汉字只限制单个自然段的最高长度，不要求全文使用相同长度的短段。句子和段落应随叙事需要自然伸缩：复杂观察、推理和完整对白可以充分写清，关键发现与情绪落点可以骤然收短。戏剧完整度高于文字精简，不得为了控制段落而删掉有效事件、对手手段、现实损失、关键反应、对白攻防、反扑或选择，也不得把同一句话、同一个动作或同一条信息机械截断。
 
 【叙述原则】
-小说必须有可阅读的叙事层，而不是对白加动作的准剧本。允许并鼓励使用具有剧情功能的空间、物件、声音、感官、主角观察、推理、误判、记忆和情绪过渡：它们必须建立处境、形成线索、制造压力、体现人物差异、改变判断或促成选择。关键物件可以写清形态与异常，环境可以建立封闭、危险或反差，主角可以沿所见所闻展开必要推断；不同人物面对同一刺激应有符合身份的不同反应。禁止的是与行动无关的装修清单、外貌履历罗列、连续辞藻比喻、套路微反应，以及反复用呼吸、光线、气味、触感证明同一种情绪。描写若删除后不影响处境、线索、人物或选择，就删除；若承担这些功能，就应准确保留。第一段仍须立刻进入异常处境、关键动作或改变局面的对白，可以用一两个有效细节让读者看见现场，不得回顾前情或介绍身份。
+小说必须有可阅读的叙事层，而不是对白加动作的准剧本。叙述必须贴近锁定主角的感知与思维，不要只连续报告人物做了什么；应让主角从具体细节中观察异常、形成疑问、作出判断，必要时经历误判与修正，让读者与主角同步发现，而不是用“诡异、危险、压迫”等形容词提前代替结论。允许并鼓励使用具有剧情功能的空间、物件、声音、感官、主角观察、推理、误判、记忆和情绪过渡：它们必须建立处境、形成线索、制造压力、体现人物差异、改变判断或促成选择。真正影响处境与认知的关键细节可以停留、回看，并在新的发现中获得新的意义。禁止的是与行动无关的装修清单、外貌履历罗列、连续辞藻比喻、套路微反应，以及反复用呼吸、光线、气味、触感证明同一种情绪。描写若删除后不影响处境、线索、人物或选择，就删除；若承担这些功能，就应准确保留。第一段仍须立刻进入异常处境、关键动作或改变局面的对白，可以用一两个有效细节让读者看见现场，不得回顾前情或介绍身份。
 
 【小说开头技巧】
 ${openingRule}
@@ -452,8 +473,8 @@ ${openingRule}
 8. 对白风格严格服从当前选项。${project.emotion_intensity==="extreme"?"下沉档：对手的坏必须由目的、行为、对白和后果共同呈现。让其先为夺利、控制、灭口、抢夺或维护地位采取可见的设局、诱骗、栽赃、封路或威胁，再用主角的穷、弱、没见识和命根子作筹码说出诛心且带条件的台词，并造成当场可见损失。关键压制同时具备阴险手段、诛心对白、现实后果；被揭穿后按利益继续否认、甩锅、灭证、威胁或反扑。不能只靠脏话、无缘由吼叫、降智违法或突然知道未知信息显得坏。":"强烈档：让对手在做出具体阻碍行为的同时主动说事。其对白围绕具体经历、数字、规则、身份和行为，通过炫耀、辩解、命令、自证或合理化，自然暴露无知、贪婪、虚伪、傲慢或认知错误，让观众觉得气人但仍符合人物利益。不得让对手为了方便剧情直接承认秘密或降智自爆。主角不必抓漏洞追问或当场拆穿，可以忍耐、观察、记住、试探或暂缓反击；拆穿与打脸时机严格服从【必须发生】和钩子。"} 系统或特殊声音同样使用「」写入小说，内容像开礼包，只短促播报结果和解锁，不得写成规则说明书或界面清单。
 8.1 单人场景不等于无语言。除非本集明确要求全程无声或不能出声，整章不得没有任何直接语言。没有其他可说话人物时，让主角围绕眼前目标、危险、疼痛、判断或决定说出短促且会推动行动的话，必要时可写少量直接内心语言；已有依据的系统音、广播、录音或电话对象可以参与，怪物只能发出符合设定的声音。不得为凑对白凭空新增联系人、广播内容、系统激活、人物知情或让无语言能力的对象突然会说话；不得用自言自语复述读者已经看到的动作和背景。${project.emotion_intensity==="extreme"?"异常强烈档的单人高压场景不能只靠连续动作和受难描写维持强度；主角必须用短促外说、自言自语或必要的直接内心语言，持续表达抗拒、判断、恐惧、愤怒、选择或反击意图，每次语言都要推动下一步行动。":""}
 9. 严格执行上方锁定的${narrativePerson==="third"?"第三人称限知":"第一人称限知"}；对白只能使用中文直角引号「」，正文禁止英文双引号和中文弯双引号。禁止纯人物名后直接接冒号和台词，也禁止用说、问连接台词。需要标明说话人时，把人物与真实动作自然连写后再接台词。正确示例：王志远放下茶杯：「怎么样？」错误形式包括纯人物名直接接台词、人物名说或问后接台词、人物名后用括号插入动作。也可以直接写「台词」，在前后叙述中自然明确说话人。所有台词必须是完整自然句。小说允许用简短的主角内心与情绪感受增强代入，但每次只写一个清楚的感受、判断或选择，不连续渲染，不重复已经写出的局面；禁止任何圆括号或小括号。
-9.1 每个自然段不区分叙述、对白或混合段，全部不得超过40个汉字；通常写10–30个汉字，确有必要可以接近40字，标点、数字和英文不计入。一个自然段承载一个完整动作、反应、感受、对白目的或局面变化；信息较多时，应按自然的戏剧节拍换段，而不是删掉有效内容。对白要充分展开交锋，不能为了40字缩成概述或减少回合。避免连续描摹同一外观、观察、拿取、行走、环境或感官过程；禁止把同一句话、同一个动作或同一信息机械切成多个残句规避限制。
-10. 写完后严格执行 Skill 自检并在内部直接修正：把成稿逐段反向对应节点1至最后节点，确认每个节点都能在正文中找到现场发生的行动、交锋和结果，且正文首次出现各节点的顺序与编号完全一致；任何节点缺失、只有概述、顺序颠倒或后项抢跑，都必须在输出前修正。再检查每个事件的前因后果、能力如何触发且是否符合设定、对手反应是否符合利益、情绪是否自然递进、结尾是否准确停在链条最后一个钩子；通读整章核对身份、能力、知情、归属、原因、损失、关系、数字和动机，消除后文无依据改写前文事实的矛盾。最后逐段统计汉字并改到40字以内：优先缩短句式或按动作、回应、升级、结果等自然节拍换段，禁止删除有效事件、对手手段、现实后果、人物感受、对白攻防、反扑和选择；删除的只能是重复解释、重复状态和连续装饰性描摹。确认第一段是关键动作或改变局面的对白。输出前检查全部标点：圆括号和小括号必须为零；英文双引号及中文弯双引号必须为零；每一句对白和声音都必须使用「」并成对闭合。钩子必须体现主角已经决定或开始行动，而不是刚发现机会、继续挨欺负或站着发呆。不要输出自检过程。
+9.1 每个自然段不区分叙述、对白或混合段，全部不得超过100个汉字，标点、数字和英文不计入。段落长短服从内容与节奏，不设统一推荐长度；复杂观察、连续推理、完整对白和情绪转折可以写成较长段落，关键发现、回答和落点可以使用短段。信息较多时按自然语义和戏剧节拍换段，不得把全文切成长度相近的动作短句，也不得把同一句话、同一个动作或同一信息机械切成多个残句规避限制。
+10. 写完后严格执行 Skill 自检并在内部直接修正：把成稿逐段反向对应节点1至最后节点，确认每个节点都能在正文中找到现场发生的行动、交锋和结果，且正文首次出现各节点的顺序与编号完全一致；任何节点缺失、只有概述、顺序颠倒或后项抢跑，都必须在输出前修正。再检查每个事件的前因后果、能力如何触发且是否符合设定、对手反应是否符合利益、情绪是否自然递进、结尾是否准确停在链条最后一个钩子；通读整章核对身份、能力、知情、归属、原因、损失、关系、数字和动机，消除后文无依据改写前文事实的矛盾。最后逐段统计汉字并改到100字以内：优先缩短重复句式或按自然语义和戏剧节拍换段，禁止删除有效事件、对手手段、现实后果、人物感受、观察推理、对白攻防、反扑和选择；删除的只能是重复解释、重复状态和无功能的连续装饰。确认全文有自然的长短变化，而不是均匀短句。确认第一段是关键动作或改变局面的对白。输出前检查全部标点：圆括号和小括号必须为零；英文双引号及中文弯双引号必须为零；每一句对白和声音都必须使用「」并成对闭合。钩子必须体现主角已经决定或开始行动，而不是刚发现机会、继续挨欺负或站着发呆。不要输出自检过程。
 11. 有效中文字符必须在 ${templateGuide?.novelTarget?.minCharacters||1000}–${templateGuide?.novelTarget?.maxCharacters||1500} 之间，目标约 ${templateGuide?.novelTarget?.characters||1250}，不得靠重复和无效景物凑字。
 
 【本集编号】EP${String(episode?.episode_no||1).padStart(2,"0")}
@@ -469,6 +490,7 @@ ${numberedRequiredPlot(episode?.required_plot)}
 【不得揭示】${novelContextText(episode?.must_not_reveal)||"无"}
 【人设】
 ${novelCharacterText(characters)}
+语言特征只作用于对应人物实际说出口的对白；自然、低频地体现，不得每句话刻意复现，不得改变对白原意。未列语言特征的人物不施加额外限制。
 
 【主要人物首登场边界】
 ${continuity.characterAppearancePlan||"旧项目尚未规划首登场集；仅按本集大概内容与必须发生决定人物是否出场。"}
@@ -603,6 +625,10 @@ ${narrativeLengthRule(project,"writing")}
 【锁定主角｜全局最高优先级】
 ${protagonist}｜${protagonistIdentity}
 剧本的主角身份不得因其他人物戏份较多而改变；只有上述锁定主角可以承接小说视角与必要的 V.O.。无论小说采用第一人称还是第三人称，主角 V.O. 一律改写成主角本人的第一人称口吻：自称使用“我/我的”，不得用主角姓名或“他/她”称呼自己；指向其他人物的姓名和代词保持原指向，不得一并替换。
+
+【人物语言特征】
+${novelCharacterText(characters)}
+语言特征只作用于对应人物实际说出口的对白；自然、低频地体现，不得每句话刻意复现，不得改变对白原意。未列语言特征的人物不施加额外限制。
 
 情绪强度：${intensity}
 必须发生：${episode?.required_plot||""}

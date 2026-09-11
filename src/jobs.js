@@ -133,13 +133,18 @@ async function runStage(job,project){
   const prompt=buildStagePrompt(stage,project,constraints,artifacts,evidence);
   const result=await generate({stage,project,prompt,signal:currentSignal()});
   let output=result.output;
+  if(stage==="planning"){
+    const existing=artifacts.find(x=>x.type==="planning")?.content||{};
+    if(String(existing.novel_style||"").trim())output={...output,novel_style:existing.novel_style};
+  }
   if(stage==="characters"){
     const existing=artifacts.find(x=>x.type==="characters")?.content||{};
     const oldCharacters=Array.isArray(existing.characters)?existing.characters:[];
     const nextCharacters=Array.isArray(output?.characters)?[...output.characters]:[];
     for(const oldCharacter of oldCharacters){
-      const sameName=nextCharacters.some(item=>String(item.name||"").trim()&&String(item.name||"").trim()===String(oldCharacter.name||"").trim());
+      const sameName=nextCharacters.find(item=>String(item.name||"").trim()&&String(item.name||"").trim()===String(oldCharacter.name||"").trim());
       if(!sameName)nextCharacters.push(oldCharacter);
+      else if(String(oldCharacter.speech_style||"").trim()&&!String(sameName.speech_style||"").trim())sameName.speech_style=oldCharacter.speech_style;
     }
     output={...output,visual_style:existing.visual_style||output?.visual_style||"",characters:nextCharacters};
   }
@@ -149,14 +154,15 @@ async function runStage(job,project){
 }
 async function runPlanningSection(job,project){
   const section=job.target;
-  const allowed=["title","framework","worldbuilding","synopsis","core_expectations"];
+  const allowed=["title","framework","worldbuilding","synopsis","core_expectations","novel_style"];
   if(!allowed.includes(section))throw new Error("未知的策划字段");
   const constraints=constraintsFor(project.id),artifacts=artifactsFor(project.id);
   const current=artifacts.find(x=>x.type==="planning")?.content||{};
   const prompt=buildPlanningSectionPrompt(section,project,constraints,artifacts);
   const schema={type:"object",properties:{[section]:{type:"string"}},required:[section],additionalProperties:false};
   const result=await generate({stage:"planning_section",project,prompt,schema,extra:{section},signal:currentSignal()});
-  const merged={...current,[section]:result.output[section]};
+  const rawValue=String(result.output[section]||"").trim(),value=section==="novel_style"&&rawValue&&!rawValue.endsWith("感")?`${rawValue}感`:rawValue;
+  const merged={...current,[section]:value};
   upsertArtifact(project.id,"planning",merged);
   run("INSERT INTO generations(project_id,stage,provider,model,prompt,output,status,input_tokens,output_tokens) VALUES(@pid,@stage,@provider,@model,@prompt,@output,'completed',@input,@out)",{pid:project.id,stage:`planning.${section}`,provider:result.provider,model:result.model,prompt,output:JSON.stringify(result.output),input:result.usage.input_tokens||0,out:result.usage.output_tokens||0});
   return {section,provider:result.provider,model:result.model};
@@ -576,7 +582,7 @@ export async function writeEpisode(project,episode,job=null){
 const stageLabel=stage=>({novel:"小说",arrangement:"剧情安排",script:"剧本",memory:"故事状态"}[stage]||stage||"任务");
 function clearGeneratedMemory(projectId){
   transaction(()=>{
-    for(const table of ["memory_vectors","memory_relationship_changes","memory_relationships","memory_secondary_characters","memory_golden_ability_changes","memory_golden_abilities","memory_golden_changes","memory_golden_fingers","memory_prop_changes","memory_important_props","memory_resource_changes","memory_resources","memory_chains","memory_temporal_relations","memory_links","memory_events","memory_extractions"])run(`DELETE FROM ${table} WHERE project_id=@pid`,{pid:projectId});
+    for(const table of ["memory_vectors","memory_relationship_changes","memory_relationships","memory_secondary_characters","memory_golden_ability_changes","memory_golden_abilities","memory_golden_changes","memory_golden_fingers","memory_prop_changes","memory_important_props","memory_resource_changes","memory_resources","memory_chains","memory_temporal_relations","memory_links","memory_events","memory_extractions","memory_event_scan_checkpoints"])run(`DELETE FROM ${table} WHERE project_id=@pid`,{pid:projectId});
   });
 }
 function isProviderRejection(message){return /(?:^|[：:\s])(?:[^\n]{0,32})?(?:拒绝了输入内容|拦截了生成结果|敏感类型\s*\d*)/i.test(String(message||""));}
@@ -632,7 +638,7 @@ async function execute(job){
   }
   if(job.type==="memory_rebuild"){
     if(!embeddingConfigured())throw new Error("未配置 Embedding API，无法重建向量与剧情链");const requestedCutoff=Math.max(0,Number(job.payload?.cutoff)||0),rows=all("SELECT * FROM episodes WHERE project_id=@pid ORDER BY episode_no",{pid:project.id});let liveCutoff=0;for(const episode of rows){if(Number(episode.episode_no)!==liveCutoff+1||!String(episode.script||"").trim())break;liveCutoff++;}const cutoff=requestedCutoff?Math.min(requestedCutoff,liveCutoff):liveCutoff,episodes=rows.filter(item=>item.episode_no<=cutoff&&String(item.script||"").trim());if(!episodes.length)throw new Error("EP01没有剧本，无法建立链式剧情记忆");run("UPDATE jobs SET total=@total WHERE id=@id",{total:episodes.length,id:job.id});
-    if(Number(job.progress||0)===0)transaction(()=>{run("DELETE FROM memory_vectors WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_relationship_changes WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_relationships WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_secondary_characters WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_golden_ability_changes WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_golden_abilities WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_golden_changes WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_golden_fingers WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_prop_changes WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_important_props WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_resource_changes WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_resources WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_chains WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_temporal_relations WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_events WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_extractions WHERE project_id=@pid",{pid:project.id});});
+    if(Number(job.progress||0)===0)transaction(()=>{run("DELETE FROM memory_vectors WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_relationship_changes WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_relationships WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_secondary_characters WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_golden_ability_changes WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_golden_abilities WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_golden_changes WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_golden_fingers WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_prop_changes WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_important_props WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_resource_changes WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_resources WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_chains WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_temporal_relations WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_events WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_extractions WHERE project_id=@pid",{pid:project.id});run("DELETE FROM memory_event_scan_checkpoints WHERE project_id=@pid",{pid:project.id});});
     for(let index=Math.max(0,Number(job.progress)||0);index<episodes.length;index++){const episode=episodes[index];run("UPDATE jobs SET message=@message WHERE id=@id",{message:`正在重建 EP${String(episode.episode_no).padStart(2,"0")} 向量与剧情链（${index+1}/${episodes.length}）`,id:job.id});await extractEpisodeMemory(project,episode,currentSignal());run("UPDATE jobs SET progress=@progress WHERE id=@id",{progress:index+1,id:job.id});}
     return {episodes:episodes.length};
   }

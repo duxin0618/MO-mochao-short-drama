@@ -21,10 +21,10 @@ const schemas = {
   ,scene_treatment: objectSchema({scene_treatment:string})
 };
 const hanCount=value=>(String(value||"").match(/\p{Script=Han}/gu)||[]).length;
-export function novelDescriptionIssues(value,limit=40){
+export function novelDescriptionIssues(value,limit=100){
   return String(value||"").split(/\r?\n+/).map((paragraph,index)=>({paragraph:index+1,text:paragraph.trim()})).filter(item=>item.text).map(item=>({...item,count:hanCount(item.text)})).filter(item=>item.count>limit);
 }
-export function splitNovelLongParagraphs(value,limit=40){
+export function splitNovelLongParagraphs(value,limit=100){
   return String(value||"").split(/\r?\n+/).map(raw=>{
     const paragraph=raw.trim();
     if(!paragraph||hanCount(paragraph)<=limit)return paragraph;
@@ -606,7 +606,7 @@ export function validatePlainOutput(stage,output,extra={}){
     const labelledSpeech=(text.match(/(?:说|问)\s*[：:]\s*「/g)||[]).length;
     // “人物+真实动作：「台词」”是 Skill 允许的小说格式，不能误判为人物名冒号。
     if(labelledSpeech>=5)return `小说反复使用了刻板的“说/问：台词”格式（共 ${labelledSpeech} 处）`;
-    const descriptionIssues=novelDescriptionIssues(text);if(descriptionIssues.length)return `小说段落超过40个汉字：${descriptionIssues.slice(0,12).map(item=>`第${item.paragraph}段${item.count}字“${item.text.slice(0,55)}”`).join("；")}`;
+    const descriptionIssues=novelDescriptionIssues(text);if(descriptionIssues.length)return `小说段落超过100个汉字：${descriptionIssues.slice(0,12).map(item=>`第${item.paragraph}段${item.count}字“${item.text.slice(0,110)}”`).join("；")}`;
     const knowledgeIssue=unauthorizedGoldenKnowledgeIssue(text,extra,stage);if(knowledgeIssue)return knowledgeIssue;
     const premature=prematureNovelAppearance(text,extra.forbiddenAppearanceCharacters||[]);
     if(premature)return `主要人物“${premature}”尚未到规划的首次出场集，却已在本集现场行动或说话`;
@@ -632,6 +632,13 @@ export function validatePlainOutput(stage,output,extra={}){
   }
   return "";
 }
+export function shortNovelExpansionInstruction(reason,extra={}){
+  const actual=Number(String(reason||"").match(/有效字符\s*(\d+)/)?.[1]||0),minimum=Number(extra.minEffectiveCharacters)||0,maximum=Math.max(minimum,Number(extra.maxEffectiveCharacters)||minimum),creativeMin=Number(extra.creativeMinCharacters)||minimum,creativeMax=Number(extra.creativeMaxCharacters)||maximum;
+  if(!actual||!minimum)return `上一版篇幅不足：${reason}。只扩充关键冲突回合、因果和必要细节，不增加新支线，严格落在 ${minimum||1500}–${maximum||2000} 个纯汉字。只输出修订后的完整正文。`;
+  const safety=Math.min(300,Math.max(100,Math.ceil(minimum*.15/50)*50)),targetLow=Math.min(maximum,minimum+safety),ideal=Math.round((creativeMin+creativeMax)/2),targetHigh=Math.min(maximum,Math.max(targetLow,ideal)),minimumIncrease=Math.max(1,targetLow-actual),suggestedLow=Math.ceil(minimumIncrease/50)*50,suggestedHigh=Math.max(suggestedLow,Math.ceil(Math.max(minimumIncrease,targetHigh-actual)/50)*50),increaseText=suggestedHigh>suggestedLow?`${suggestedLow}–${suggestedHigh}`:`${suggestedLow}`,targetText=targetHigh>targetLow?`${targetLow}–${targetHigh}`:`${targetLow}`;
+  return `上一版篇幅不足：${reason}。不要只补到最低线边缘；本轮至少净增加 ${minimumIncrease} 字，建议净增加 ${increaseText} 字，使全文稳定达到 ${targetText} 个纯汉字，且不得超过模板最高验收字数 ${maximum} 字。只扩充关键冲突回合、因果和必要细节，不增加新支线。只在上一版已有场景和事件内部扩充，优先写足冲突中的行动、对白攻防和双方反应，再补清主角观察判断、现实后果与前后因果。现场描写必须服务于处境、线索、压力、人物或既定选择。不得新增人物、设定、条件、秘密、证据、能力、道具，也不得改变既有事件结果。不得重复前情、重复情绪、堆砌环境与辞藻、拆写同义动作，也不得只在结尾集中追加内容。只输出修订后的完整正文。`;
+}
+
 function repairInstruction(stage,error,extra={}){
   const reason=String(error||"格式错误");
   if(stage==="episode_arrangement"&&/场次编号应依次为/.test(reason))return `上一版只需修正【剧情安排】的场次编号：${reason}。按现有场景先后从1开始连续重编号，不得修改地点、时段、事件、顺序、因果和cliffhanger。只输出四个完整区块。`;
@@ -655,7 +662,7 @@ function repairInstruction(stage,error,extra={}){
   if(stage==="episode"&&/(?:不可拍摄|心理判断|作者解释|作者交代|矛盾摘要|无效迟疑|内心独白错误|动作段转述|Skill禁止|环境|感官|套路描写|非主角使用V\.O|主角V\.O\.替其他人物)/.test(reason))return `错误：${reason}。只修命中的违规句，不重写其他内容。具体修法：一，“在心里说、心中默念、内心说道”等不是动作；删除动作说明，只在人物确为主角且紧随其后有观众必须知道的主角自身认知、疑问或选择时，把该信息改成一句“主角名 V.O.：台词”。二，“某人看了主角一眼，那眼神的意思是：你敢……/你要是……/否则……”属于旁白脑补他人未说出口的意图，整段及其脑补内容直接删除；不得改成主角V.O.，也不得新增为对方现场对白。只有待修改全文中本来就明确说出口的内容，才保留为人物对白。三，“心里一凛/心中一凛”本身直接删除，不得写成“主角 V.O.：我心里一凛”；若后续必要认知属于主角，可只把认知改成一句主角V.O.；若人物不是主角，禁止使用V.O.，必要内容改为该人物现场对白或改变局面的可见动作，否则删除。四，任何非主角V.O./OS都改为其现场对白、可见动作或删除，不能转交给主角；主角V.O.也不能替他人复述或脑补台词。五，“得像……”及其他比喻直接删除，不用新比喻替换；“以为、知道、觉得、意识到、看起来像”等判断，删掉不影响事件就删除，必要时优先外化。六，期限、余额、医院需求和场外处境不能作为动作旁白交代；只有原本明确说出口的语言才能从动作转述改成现场对白；无效迟疑、环境和感官渲染直接删除。不得改动事件顺序、人物、已有合格对白和钩子，不得新增情节。只输出修订后的完整剧本。`;
   if(stage==="episode_novel"&&/双引号/.test(reason))return `上一版剧情、篇幅和事件链均保留，只修正小说对白标点：把所有英文双引号及中文弯双引号中的台词改为成对的「台词」，非对白处用于强调的双引号直接删除。不得改写台词内容、事件、人物和钩子。完成后确认正文只用「」表示对白。只输出修订后的完整小说。`;
   if(stage==="episode_novel"&&/人物名冒号|剧本式.*冒号/.test(reason))return `上一版剧情、篇幅和事件链均保留，只修正小说对白格式：去掉“人物名：”或“说/问：”标签，把台词自然嵌入当前锁定的人称叙述并统一使用「」。不得改变叙事人称，不得改写事件、删减对白、增加支线或改变钩子。只输出修订后的完整小说。`;
-  if(stage==="episode_novel"&&/小说段落超过40个汉字/.test(reason))return `上一版经程序按完整句安全分段后，以下段落仍超过40个汉字：${reason}。只修正列出的超长单句或不可直接分割段，每段全部汉字合计必须不超过40个。按内容选择修法：一，长对白保持人物原本的说话目的，按质问、回应、加码、条件、威胁或决定等自然语义拆成两至三个各自完整的「对白」段，不添加动作凑分段；二，叙述中包含多项行动或事实时，按行动与结果、事实项目或时间先后分别写成完整短段；三，环境与外貌只保留会参与当前剧情的部分，删除连续装饰；四，连续回忆只保留真正迫使人物作出当前选择的压力；五，系统播报可按检测、结果、价值或风险拆成数条完整播报。戏剧内容完整度高于文字精简：不得删除事件、对手手段、现实损失、人物感受、关键反应、对白攻防、反扑、选择和钩子，也不得改变顺序、因果、人物认知或说话目的。不得把同一句话、同一个动作或同一信息机械切成残句。完成后逐段重新统计，只输出修订后的完整小说。`;
+  if(stage==="episode_novel"&&/小说段落超过100个汉字/.test(reason))return `上一版经程序按完整句安全分段后，以下段落仍超过100个汉字：${reason}。只修正列出的超长单句或不可直接分割段，每段全部汉字合计必须不超过100个。按自然语义和戏剧节拍拆分，保留完整的观察、推理、对白目的与情绪变化；删除的只能是重复解释和无功能装饰。不得删除事件、对手手段、现实后果、人物感受、对白攻防、反扑、选择和钩子，也不得改变顺序、因果、人物认知或说话目的。不得把同一句话、同一个动作或同一信息机械切成残句。完成后逐段重新统计，只输出修订后的完整小说。`;
   if(/括号/.test(reason))return `上一版只因括号不合格：${reason}。只处理“（”“）”“(”“)”四种字符，保持事件、顺序、人物、对白、篇幅和钩子不变。若是“人物（动作）：「台词」”，改成“人物完成动作：「台词」”；其他括号内信息必要就直接融入所在句，不必要就删除。完成后逐字搜索这四种字符，确认数量全部为零。禁止重新构思、扩写或省略原有事件。只输出修订后的完整正文。`;
   if(/超过|超出|过长/.test(reason)){
     const targetMin=Number(extra.creativeMinCharacters)||Math.max(Number(extra.minEffectiveCharacters)||1000,(Number(extra.maxEffectiveCharacters)||2000)-300);
@@ -663,6 +670,7 @@ function repairInstruction(stage,error,extra={}){
     const screenplayPriority=stage==="episode"?`篇幅超限时，优先缩略或删除非必要的非对白内容：环境与感官渲染、重复神态和身体反应、对白已经表达的信息、无效走动观察停顿、作者解释和前情复述直接删除；连续但必要的进出场、打斗追逐过程和辅助动作压成最短可拍摄的一句。非对白必须保留演员必须执行且会改变局面、交代关键空间关系、完成道具流转、触发冲突或呈现事件结果的动作。不得靠删减威胁、条件、反驳、揭露、选择、结果等关键对白来凑字数，也不得删减剧情安排事件或集尾钩子。`:`删除重复解释、重复情绪、无效环境和同义动作，合并表达同一信息的对白，只保留每个关键事件成立所需的最短有效内容。`;
     return `上一版篇幅过长：${reason}。这是删冗余，不是重新创作。严格沿用上一版的事件顺序、人物、因果和钩子；${screenplayPriority}按纯汉字统计，必须压缩到 ${targetMin}–${targetMax} 字。不得新增情节，不得用改写后的长句补回删掉的字数。只输出压缩后的完整正文。`;
   }
+  if(stage==="episode_novel"&&/少于|不足|过短/.test(reason))return shortNovelExpansionInstruction(reason,extra);
   if(/少于|不足|过短/.test(reason))return `上一版篇幅不足：${reason}。只扩充关键冲突回合、因果和必要细节，不增加新支线，严格落在 ${extra.minEffectiveCharacters||1500}–${extra.maxEffectiveCharacters||2000} 个纯汉字。只输出修订后的完整正文。`;
   return `上一版未通过校验：${reason}。只针对该问题修订上一版，保持已经正确的剧情、顺序、人物和钩子不变；不要从头另写。只输出修订后的完整正文。`;
 }
@@ -670,7 +678,7 @@ function compactRevisionPrompt(stage,previousOutput,revision,extra={}){
   const episode=extra.episode||{};
   const kind=stage==="episode_novel"?"小说中间稿":"剧本";
   const perspectiveLock=stage==="episode_novel"?`\n【叙事人称｜修订时不得改变】${extra.narrativePerson==="third"?"第三人称限知；叙述使用主角姓名及他/她，对白中的我不改":"第一人称限知；主角叙述使用我，对白不改"}`:"";
-  const descriptionLock=stage==="episode_novel"?`\n【40字硬限制｜不得削减剧情】每个自然段不得超过40个汉字。优先缩短句式或按自然戏剧节拍换段，不得删掉有效事件、冲突升级、人物感受、对白回合、现实后果、反扑和选择；环境、外貌、感官和心理可以简短服务剧情，但不连续铺陈或重复证明同一状态。`:"";
+  const descriptionLock=stage==="episode_novel"?`\n【100字段落上限｜不得削减剧情】每个自然段不得超过100个汉字。句子和段落应随叙事需要自然伸缩，复杂观察、推理和完整对白可以充分写清，关键发现与情绪落点可以骤然收短；不得把全文切成长度相近的动作短句，也不得删掉有效事件、冲突升级、人物感受、对白回合、现实后果、反扑和选择。`:"";
   const localConsistencyLock=stage==="episode_novel"?`\n【本章事实一致性】后文不得为了升级冲突，临时改写前文已建立的身份、能力、知情、物品归属、事件原因、损失对象、关系、数字或动机；只有本集大概内容或必须发生明确安排、且正文给出获知证据时才允许揭露新真相。`:"";
   const screenplaySceneLock=stage==="episode"&&!/(?:篇幅|有效字符|字数|超过模板上限)/.test(String(revision||""))?(()=>{
     const scenes=screenplaySceneRecords(previousOutput).records;
@@ -704,7 +712,7 @@ function mock(stage, project, extra = {}) {
   };
   if(stage==="benchmark")return {benchmark_works:[],adaptation_direction:"在保留核心钩子的基础上强化短剧节奏与差异化",framework:"建立困境→获得行动机制→冲突升级→发现真相→主动反击→结局兑现",worldbuilding:{era_region:"待确定",spaces:[],rules:[],dangers:[],factions:[],hidden_truth:"待确定"},character_direction:"人物关系随阶段目标变化",ai_spectacles:[]};
   if(stage==="planning")return {title:"开局觉醒，我一路逆袭",framework:"主角陷入困境→获得特殊机制→解决危机并结成同盟→发现幕后真相→反击并兑现结局",worldbuilding:"时代地域：待确定\n核心场域：待确定\n运行规则：待确定",synopsis:"主角被动卷入危机，借助特殊机制建立同盟并不断解决升级的危险。\n\n随着探索深入，主角识破幕后真相，联合同伴完成反击并兑现结局。",core_expectations:"主角依靠核心机制，自身获得实力成长，逐步完成核心目标。"};
-  if(stage==="planning_section")return {[extra.section]:extra.section==="title"?"开局觉醒，我一路逆袭":extra.section==="core_expectations"?"主角依靠核心机制，自身获得实力成长，逐步完成核心目标。":"已单独优化该策划字段。"};
+  if(stage==="planning_section")return {[extra.section]:extra.section==="title"?"开局觉醒，我一路逆袭":extra.section==="core_expectations"?"主角依靠核心机制，自身获得实力成长，逐步完成核心目标。":extra.section==="novel_style"?"冷峻悬疑感":"已单独优化该策划字段。"};
   if(stage==="synopsis")return {opening_state:"主角处于失衡状态",inciting_incident:"突发事件迫使主角行动",core_mechanism:"以核心钩子持续改变局面",development:"危机、关系与秘密逐级升级",conspiracy_or_reversal:"初始事件背后存在更大真相",ending_direction:"兑现核心承诺",synopsis:"主角从被动卷入危机，到建立同盟、识破真相并完成最终选择。"};
   if(stage==="cards")return {total_episodes:project.total_episodes,card_1:{position:Math.max(3,Math.round(project.total_episodes*.2)),paywall:"卡后付费",event:"首次重大揭露"},card_2:{position:Math.round(project.total_episodes*.6),paywall:"卡后付费",event:"重大失败或关系破裂"},card_3:null};
   if(stage==="expectations")return {core_expectations:["高频状态变化","阶段性反转","强集尾钩子"],visual_references:[]};
@@ -738,6 +746,13 @@ function mock(stage, project, extra = {}) {
 }
 
 const isDeepSeekModel=provider=>provider.id==="deepseek"||/^deepseek-v4-(?:flash|pro)$/i.test(String(provider.model||""));
+
+export function isTransientTransportError(error){
+  const status=Number(error?.status||error?.response?.status||error?.cause?.status||0);
+  if([408,429,500,502,503,504].includes(status))return true;
+  const material=[error?.message,error?.code,error?.type,error?.cause?.message,error?.cause?.code].filter(Boolean).join(" ");
+  return /connection error|request timed out|timeout|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EPIPE|socket hang up|fetch failed|network error|连接(?:中断|关闭|失败)|请求超时/i.test(material);
+}
 
 export async function generate({ stage, project, prompt, extra = {}, schema = null, signal = null, onAttempt = null }) {
   if(["episode_novel","episode"].includes(stage)){
@@ -782,7 +797,11 @@ export async function generate({ stage, project, prompt, extra = {}, schema = nu
           throw new Error(error);
         }}
         return {provider:provider.id,model:provider.model,output,usage:response.usage||{}};
-      }catch(error){lastError=error;if(signal?.aborted)throw error;}
+      }catch(error){
+        lastError=error;
+        if(signal?.aborted)throw error;
+        if(extra.sharedTransientRetry&&isTransientTransportError(error))throw error;
+      }
     }
     throw new Error(stage==="episode_arrangement"?`${provider.label} 完整生成最多2轮、轻量补丁最多3轮后仍未通过：${lastError?.message||"未知错误"}`:`${provider.label} 连续${responseAttempts}次未生成合格内容：${lastError?.message||"未知错误"}`);
   }
@@ -818,6 +837,7 @@ export async function generate({ stage, project, prompt, extra = {}, schema = nu
     if(provider.id==="minimax")request.max_completion_tokens=outputLimit;else request.max_tokens=outputLimit;
     try{response=await client.chat.completions.create(request,signal?{signal}:undefined);}
     catch(error){
+      if(extra.sharedTransientRetry&&isTransientTransportError(error))throw error;
       if(["outline_spine","outline_dramatic","outline_finalize","scene_treatment_text","episode_boundaries_text","episode_boundary_text","episode_plan_text","episode_arrangement","episode_novel","episode","memory_events","memory_dimensions","memory_links","memory_characters"].includes(stage)&&attempt<maxAttempts-1&&!signal?.aborted){lastError=error;continue;}
       throw error;
     }
